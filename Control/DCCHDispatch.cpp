@@ -29,6 +29,10 @@
 #include <Logger.h>
 #undef WARNING
 
+#include "RANControl.h"
+using namespace Control;
+extern RANControl gRANControl;
+
 using namespace std;
 using namespace Control;
 
@@ -94,7 +98,10 @@ void DCCHDispatchMessage(const GSM::L3Message* msg, UMTS::DCCHLogicalChannel* DC
 	// Each protocol has it's own sub-dispatcher.
 	switch (msg->PD()) {
 		case GSM::L3MobilityManagementPD:
-			DCCHDispatchMM(dynamic_cast<const GSM::L3MMMessage*>(msg),DCCH);
+		    if (!gRANControl.enabled())
+		    {
+		        DCCHDispatchMM(dynamic_cast<const GSM::L3MMMessage*>(msg),DCCH);
+		    }
 			break;
 		case GSM::L3RadioResourcePD:
 			DCCHDispatchRR(dynamic_cast<const GSM::L3RRMessage*>(msg),DCCH);

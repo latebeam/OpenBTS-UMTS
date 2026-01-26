@@ -26,6 +26,7 @@ libcommon_la_SOURCES = \
 	ByteVector.cpp \
 	LinkedLists.cpp \
 	Sockets.cpp \
+	TCPSocket.cpp\ 
 	Threads.cpp \
 	Timeval.cpp \
 	Logger.cpp \
@@ -53,6 +54,7 @@ noinst_HEADERS = \
 	Interthread.h \
 	LinkedLists.h \
 	Sockets.h \
+	TCPSocket.h \ 
 	Threads.h \
 	Timeval.h \
 	Regexp.h \

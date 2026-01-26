@@ -62,6 +62,8 @@ INSERT OR IGNORE INTO "CONFIG" VALUES('GSM.Timer.T3212','0',0,0,'Registration ti
 INSERT OR IGNORE INTO "CONFIG" VALUES('Log.Alarms.Max','20',0,0,'Maximum number of alarms to remember inside the application.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('Log.File','',0,0,'Path to use for textfile based logging.  By default, this feature is disabled.  To enable, specify an absolute path to the file you wish to use, eg: /tmp/my-debug.log.  To disable again, execute "unconfig Log.File".');
 INSERT OR IGNORE INTO "CONFIG" VALUES('Log.Level','NOTICE',0,0,'Default logging level when no other level is defined for a file.');
+INSERT OR IGNORE INTO "CONFIG" VALUES('Log.FileTransceiver','/tmp/transceiver.log',0,0,'Path to use for textfile based logging.  By default, this feature is disabled.  To enable, specify an absolute path to the file you wish to use, eg: /tmp/transceiver.log.  To disable again, execute "unconfig Log.File".');
+INSERT OR IGNORE INTO "CONFIG" VALUES('Log.LevelTransceiver','ERROR',0,0,'Default logging level when no other level is defined for a file.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('RTP.Range','98',1,0,'Range of RTP port pool.  Pool is RTP.Start to RTP.Range-1.  Static.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('RTP.Start','16484',1,0,'Base of RTP port pool.  Pool is RTP.Start to RTP.Range-1.  Static.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('SGSN.Debug','0',0,0,'1=enabled, 0=disabled - Add layer-3 messages to the GGSN.Logfile, if any.');
@@ -139,6 +141,8 @@ INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.Timers.Inactivity.Release','180',0,0
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.Uplink.Puncturing.Limit','100',0,0,'Puncturing Limit of L1 rate-matcher for uplink.  Do not use.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.Uplink.ScramblingCode','543',0,0,'Base index for DCH scrambling codes assigned to UEs.  Valid values are 0 to 2^31.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.UseTurboCodes','1',0,0,'1=enabled, 0=disabled - Are turbocodes enabled.');
+INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.CPICH.TxPower','10',0,0,'FDD Primary CPICH TX Power. Valid values are -10-50.');
+INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.PowerOffset.PowerRampStep','2',0,0,'FDD PRACH PowerOffset powerRampStep. Valid values are 1-8');
 COMMIT;
 
 

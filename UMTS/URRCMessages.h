@@ -41,16 +41,23 @@ void rrcRecvDcchMessage(ByteVector &bv,UEInfo *uep, RbId rbNum);
 ByteVector* sendDirectTransfer(UEInfo* uep, ByteVector &dlpud, const char *descr);
 bool sendRadioBearerSetup(UEInfo *uep, RrcMasterChConfig *masterConfig, PhCh *phch, bool srbstoo);
 void sendRadioBearerRelease(UEInfo *uep, unsigned rabMask, bool finished);
+void sendRrcConnectionReleaseCcch(int32_t urnti);
 void sendRrcConnectionRelease(UEInfo *uep);
+void sendRrcConnectionReject(UEInfo *uep);
 void sendCellUpdateConfirm(UEInfo *uep);
 void sendSecurityModeCommand(UEInfo *uep);
+
+// TODO: should be const pointer
+void continueRrcConnectionSetup(UEInfo *uep);
 
 // The UE initially sends its identity in the RRC Connection Request Message.
 // We dont really care what it is, we just need to copy the exact
 // same UE id info into the RRC Connection Setup Message, which also assigns a U-RNTI.
 // From then on, we use the U-RNTI only.
 class AsnUeId {
+	ASN::InitialUE_Identity    mUeInitialId;
 	ASN::InitialUE_Identity_PR idType;
+
 	public:
 	ByteVector mImsi, mImei, mTmsiDS41;
 	UInt32_z mMcc, mMnc;
@@ -62,6 +69,7 @@ class AsnUeId {
 	AsnUeId() { idType = ASN::InitialUE_Identity_PR_NOTHING; }
 	AsnUeId(ByteVector &wImsi) : idType(ASN::InitialUE_Identity_PR_imsi), mImsi(wImsi) {}
 	AsnUeId(ASN::InitialUE_Identity &uid) { asnParse(uid); }
+	inline ASN::InitialUE_Identity &UeInitialId() { return mUeInitialId; }
 	bool RaiMatches();
 	bool eql(AsnUeId &other);
 	void asnParse(ASN::InitialUE_Identity &uid);

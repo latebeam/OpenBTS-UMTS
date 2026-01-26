@@ -89,9 +89,24 @@ PKG_CHECK_MODULES(UHD, uhd >= 003.007.000,
      AX_EXT],
     [AM_CONDITIONAL(HAVE_UHD, false)])
 
+
+
+
+AC_ARG_VAR([PCIESDR_TRX_DIR], [Path to pciesdr files])
+AS_IF([test -f "$PCIESDR_TRX_DIR/api/libsdr.h"], [
+  have_pciesdr=yes
+], [
+  have_pciesdr=no
+])
+AM_CONDITIONAL([HAVE_PCIESDR], [test "x$have_pciesdr" = "xyes"])
+
+
+
 # Prepends -lreadline to LIBS and defines HAVE_LIBREADLINE in config.h
 #AC_CHECK_LIB(readline, readline)
 
+AM_CONDITIONAL(ARCH_ARM, [test "x$with_neon" = "xyes" || test "x$with_neon_vfpv4" = "xyes"])
+AM_CONDITIONAL(ARCH_ARM_A15, [test "x$with_neon_vfpv4" = "xyes"])
 
 dnl Output files
 AC_CONFIG_FILES([\
@@ -109,6 +124,7 @@ AC_CONFIG_FILES([\
     SMS/Makefile \
     TransceiverRAD1/Makefile \
     TransceiverUHD/Makefile \
+    TransceiverPCIeSDR/Makefile \
     TRXManager/Makefile \
     CLI/Makefile \
     NodeManager/Makefile \

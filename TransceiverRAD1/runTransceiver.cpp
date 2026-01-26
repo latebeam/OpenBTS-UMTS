@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
 
 
   RadioInterface* radio = new RadioInterface(usrp,0 /*1024*/,SAMPSPERSYM,false);
-  Transceiver *trx = new Transceiver(5700,"127.0.0.1",SAMPSPERSYM,UMTS::Time(2,0),radio);
+  Transceiver *trx = new Transceiver(gConfig.getNum("TRX.Port"),"127.0.0.1",SAMPSPERSYM,UMTS::Time(2,0),radio);
   trx->receiveFIFO(radio->receiveFIFO());
 
 /*

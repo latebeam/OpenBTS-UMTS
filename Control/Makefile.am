@@ -26,6 +26,7 @@ libcontrol_la_SOURCES = \
 	ControlCommon.cpp \
 	MobilityManagement.cpp \
 	RadioResource.cpp \
+	RANControl.cpp \ 
 	DCCHDispatch.cpp 
 
 
@@ -35,6 +36,7 @@ noinst_HEADERS = \
 	TransactionTable.h \
 	TMSITable.h \
 	RadioResource.h \
+	RANControl.h \ 
 	MobilityManagement.h \
 	CallControl.h \
 	TMSITable.h

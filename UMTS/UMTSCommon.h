@@ -28,6 +28,10 @@
 // If USE_OLD_FEC is 0, USE_OLD_DCH must be 0 too.
 #define USE_OLD_FEC 0	// BCH, FACH and RACH
 #define USE_OLD_DCH 0	// DCH can use old or new L1 separately from BCH, FACH, RACH
+#define OLD_CONTROL_IF 0
+
+// Code cleaning related, some of the code is not actually used anymore
+#define USE_DEAD_CODE 0
 
 
 namespace UMTS {

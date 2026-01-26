@@ -390,7 +390,7 @@ static void dlEquation1(
 	for (int trchm = 0; trchm < numTrCh; trchm++) {
 		//RrcTfs *tfs = dl->getTfs(trchm);
 		double Nmj = Nistar[trchm];
-		int RMm = dl->getRM(trchm); 
+		int RMm = dl->getRM(trchm);
 		dlSumRMmxNmj[trchm] = (trchm ? dlSumRMmxNmj[trchm-1] : 0) + RMm * Nmj;
 	}
 
@@ -462,7 +462,7 @@ static void fecComputeUlNdataj(UlTrChList *ul,
 		for (int trchx = 0; trchx < ulNumTrCh; trchx++) {	// I in equation is ulNumTrCh.
 			//RrcTf *tf = tfc->getTf(trchx);
 			int nf = ul->getTTINumFrames(trchx);
-			int Nxj = result->getFPI(trchx,j)->mCodedSz/nf;		
+			int Nxj = result->getFPI(trchx,j)->mCodedSz/nf;
 			//int Nxj = tf->getTfTotalSize() / nf;
 			unsigned RMx = ul->getTfs(trchx)->getRM();
 			LOGFECINFO<< format("trchx: %d %d %d %u\n",trchx,nf,Nxj,RMx);
@@ -1162,7 +1162,7 @@ void L1TrChEncoder::l1CrcAndTBConcatenation(L1FecProgInfo *fpi, TransportBlock c
 		assert(a.size() == tbsize);
 		//OBJLOG(DEBUG) << "L1TrCHFECEncoder input " << a.size() << " " << a;
 		LOG_DOWNLINK << "L1TrCHEncoder input " <<tblocks[tbn];
-		
+
 		// parity - 25.212, 4.2.1
 		unsigned start = tbn * (tbsize + paritysize);
 		a.copyToSegment(crcAndTBConcatenationBuf,start, tbsize);
@@ -1413,7 +1413,7 @@ void L1CCTrChUplink::l1WriteLowSideFrame(const RxBitsBurst &burst, float tfci[30
         }
 
 	for (unsigned j = 0; j < gFrameSlots; j++) {
-		SoftVector burstSeg(burst.segment(j*mSlotSize,mSlotSize));	
+		SoftVector burstSeg(burst.segment(j*mSlotSize,mSlotSize));
 		float tfciSeg[2] = {tfci[j*2],tfci[j*2+1]};
         	l1AccumulateSlots(&burstSeg,tfciSeg);
 	}
@@ -1628,7 +1628,7 @@ void L1TrChDecoder::l1Deconcatenation(L1FecProgInfo *fpi, BitVector &b)
 		//assert(mUpstream);
        		const TransportBlock tb(a);
         	//LOG(INFO) << "Sending up tb: " << a;
-        	if (parityOK && mUpstream) 
+        	if (parityOK && mUpstream)
 			mUpstream->macWriteLowSideTb(tb,fpi-> mCCTrChIndex);
 	}
 

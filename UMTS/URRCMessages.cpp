@@ -20,6 +20,8 @@
 #include "SgsnExport.h"
 #include "URRC.h"
 #include "UMTSLogicalChannel.h"
+#include "RANControl.h"
+
 //#include "asn_system.h"	included from AsnHelper.h
 namespace ASN {
 //#include "BIT_STRING.h"
@@ -37,11 +39,15 @@ namespace ASN {
 #define CASENAME(x) case x: return #x;
 #define CASEASNCOMMENT(foo) case ASN::foo: return #foo;
 
+using namespace Control;
+extern RANControl gRANControl;
+
 using namespace SGSN;
 
 namespace UMTS {
 const std::string descrRrcConnectionSetup("RRC_Connection_Setup_Message");
 const std::string descrRrcConnectionRelease("RRC_Connection_Release_Message");
+const std::string descrRrcConnectionReject("RRC_Connection_Reject_Message");
 const std::string descrRadioBearerSetup("RRC Radio Bearer Setup Message");
 const std::string descrRadioBearerRelease("RRC Radio Bearer Release Message");
 const std::string descrCellUpdateConfirm("RRC Cell Update Confirm Message");
@@ -763,10 +769,10 @@ void sendRrcConnectionSetup(UEInfo *uep, ASN::InitialUE_Identity *ueInitialId)
 		// These IEs are all skipped, needed only for DCH:
 		// struct UL_ChannelRequirement    *ul_ChannelRequirement  /* OPTIONAL */;
 		// struct DL_InformationPerRL_List *dl_InformationPerRL_List   /* OPTIONAL */;
-		//PhCh *phch = new PhCh(DPDCHType,256,254,256,9999,NULL); 
+		//PhCh *phch = new PhCh(DPDCHType,256,254,256,9999,NULL);
 		//iep->ul_ChannelRequirement = phch->toAsnUL_ChannelRequirement();
 		//iep->dl_CommonInformation = phch->toAsnDL_CommonInformation();
-		//iep->dl_InformationPerRL_List = phch->toAsnDL_InformationPerRL_List(); 
+		//iep->dl_InformationPerRL_List = phch->toAsnDL_InformationPerRL_List();
 		/*ASN::DL_InformationPerRL_List *result2 = RN_CALLOC(ASN::DL_InformationPerRL_List);
 			ASN::DL_InformationPerRL *one = RN_CALLOC(ASN::DL_InformationPerRL);
 			one->modeSpecificInfo.present = ASN::DL_InformationPerRL__modeSpecificInfo_PR_fdd;
@@ -805,7 +811,7 @@ void sendRrcConnectionSetup(UEInfo *uep, ASN::InitialUE_Identity *ueInitialId)
 
 // Sent when an unrecognized UE tries to talk to us.
 // Tell it to release the connection and start over.
-static void sendRrcConnectionReleaseCcch(int32_t urnti)
+void sendRrcConnectionReleaseCcch(int32_t urnti)
 {
 	ASN::DL_CCCH_Message_t msg;
 	memset(&msg,0,sizeof(msg));
@@ -823,6 +829,28 @@ static void sendRrcConnectionReleaseCcch(int32_t urnti)
 	ByteVector result(1000);
 	if (!encodeCcchMsg(&msg,result,descrRrcConnectionRelease,NULL,urnti)) {return;}
 	gMacSwitch.writeHighSideCcch(result,descrRrcConnectionRelease);
+}
+
+void sendRrcConnectionReject(UEInfo *uep) //, ASN::InitialUE_Identity *ueInitialId
+{
+	ASN::DL_CCCH_Message_t msg;
+	memset(&msg,0,sizeof(msg));
+	msg.message.present = ASN::DL_CCCH_MessageType_PR_rrcConnectionReject;
+
+	//ASN::RRCConnectionReject *m1 = &msg.message.choice.rrcConnectionRelease;
+	ASN::RRCConnectionReject *m1 = &msg.message.choice.rrcConnectionReject;
+	m1->present = ASN::RRCConnectionReject_PR_r3;
+
+	ASN::RRCConnectionReject_r3_IEs *m2 = &m1->choice.r3.rrcConnectionReject_r3;
+	AsnUeId asnUeId = uep->mUid;
+	m2->initialUE_Identity = asnUeId.UeInitialId();
+	
+	m2->rejectionCause = toAsnEnumerated(ASN::RejectionCause_congestion);
+
+	ByteVector result(1000);
+	if (!encodeCcchMsg(&msg,result,descrRrcConnectionReject,NULL,uep->mURNTI)) {return;}
+	gMacSwitch.writeHighSideCcch(result,descrRrcConnectionReject);
+
 }
 
 // This puts the phone in idle mode.
@@ -1524,7 +1552,7 @@ static void handleCellUpdate(ASN::CellUpdate_t *msg)
 	}
 }
 
-void handleRrcConnectionRequest(ASN::RRCConnectionRequest_t *msg)
+void handleRrcConnectionRequest(BitVector &tb, ASN::RRCConnectionRequest_t *msg)
 {
 	//RrcUeId ueid(&msg->initialUE_Identity);
 	// establishmentCause; Do we care?
@@ -1537,12 +1565,17 @@ void handleRrcConnectionRequest(ASN::RRCConnectionRequest_t *msg)
 	// There is an argument that if it is a duplicate request, just issue another URNTI,
 	// and whichever URNTI the UE decides to use will be fine with us, but I think
 	// that confuses the UE sometimes.
-	AsnUeId aid(msg->initialUE_Identity);
+
+	LOG(INFO) << "Request";
+	AsnUeId asnUeId(msg->initialUE_Identity);
+
+	LOG(INFO) << "asnUeId size = " << sizeof(asnUeId);
 
 	const char *comment = "UL_CCCH_MessageType_PR_rrcConnectionRequest";
-	UEInfo *uep = gRrc.findUeByAsnId(&aid);
+	UEInfo *uep = gRrc.findUeByAsnId(&asnUeId);
 	if (uep == NULL) {
-		uep = new UEInfo(&aid);
+		// Allocates RNTIs
+		uep = new UEInfo(&asnUeId);
 		comment = "UL_CCCH_MessageType_PR_rrcConnectionRequest (new UE)";
 	}
 	asnLogMsg(0, &ASN::asn_DEF_RRCConnectionRequest, msg,comment,uep);
@@ -1555,9 +1588,20 @@ void handleRrcConnectionRequest(ASN::RRCConnectionRequest_t *msg)
 	// which gets wrapped in an RRC direct transfer, which must not be integrity protected.
 	uep->integrity.integrityStop();	// Redudant with code in ueSetState, but make sure.
 
+	gRANControl.rrcConnectionSetupReqInd(uep,tb);
 	// Send the RRC Connection Setup Message,
 	// using the exact initialUE_Identity the UE provided, whatever it is.
+#if 0
 	sendRrcConnectionSetup(uep,&msg->initialUE_Identity);
+#endif
+}
+
+void continueRrcConnectionSetup(UEInfo *uep)
+{
+	LOG(INFO) << "Continue connection setup";
+	AsnUeId asnUeId = uep->mUid;
+	sendRrcConnectionSetup(uep,&asnUeId.UeInitialId());
+
 }
 
 #if 0	// Probably works, but not used, so take out to shut up compiler.
@@ -1604,7 +1648,7 @@ void rrcRecvCcchMessage(BitVector &tb,unsigned asc)
 		return;
 	case ASN::UL_CCCH_MessageType_PR_rrcConnectionRequest:
 		LOG(INFO) << "RRC Connection Request received";
-		handleRrcConnectionRequest(&msg1->message.choice.rrcConnectionRequest);
+		handleRrcConnectionRequest(tb,&msg1->message.choice.rrcConnectionRequest);
 		return;
 	case ASN::UL_CCCH_MessageType_PR_uraUpdate:
 		// We didnt crack out the URNTI for the message so just leave it null.
@@ -1626,7 +1670,7 @@ void UEInfo::ueRecvL3Msg(ByteVector &msgframe, UEInfo *uep)
 	switch ((GSM::L3PD) pd) {
 	case GSM::L3GPRSMobilityManagementPD:	// Couldnt we shorten this?
 	case GSM::L3GPRSSessionManagementPD: 	// Couldnt we shorten this?
-		//LOG(INFO) << "Sending L3 message of descr " << pd << "up to SGSN"; 
+		//LOG(INFO) << "Sending L3 message of descr " << pd << "up to SGSN";
 		sgsnHandleL3Msg(uep->mURNTI,msgframe);
 		//LOG(INFO) << "Sent to SGSN";
 		break;
@@ -1645,7 +1689,7 @@ void UEInfo::ueRecvL3Msg(ByteVector &msgframe, UEInfo *uep)
 
 		// FIXME: Ignore these until L3 GSM code is integrated
 		LOG(ERR) << "L3 GSM control message ignored";
-		//uep->mGsmL3->l3writeHighSide(msgframe);
+		uep->mGsmL3->l3writeHighSide(msgframe);
 		return;
 	case GSM::L3SMSPD:
 		// In GSM these apparently arrive on the DTCHLogicalChannel?
@@ -1823,6 +1867,10 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
 		break;
 		}
 	case ASN::UL_DCCH_MessageType_PR_uplinkDirectTransfer: {
+        if (gRANControl.enabled())
+        {
+            break;
+        }
 		// This message should arrive on SRB3
 		// This is a subsequent uplink message to L3.
 		//inform = "Uplink Direct Transfer Message";
@@ -1836,6 +1884,10 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
 		break;
 		}
 	case ASN::UL_DCCH_MessageType_PR_initialDirectTransfer: {
+        if (gRANControl.enabled())
+        {
+            break;
+        }
 		//inform = "Initial Direct Transfer Message";
 		// This message should arrive on SRB3
 		// This is the first uplink message to L3.
@@ -1898,7 +1950,7 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
 				// Harvind (3-17-13) See above.  Keep PDP context intact for smoother operation.
 				//printf("Freeing all PDP contexts.");
 				//uep->sgsnFreePdpAll(mURNTI);
-                                sendRrcConnectionRelease(uep);
+                sendRrcConnectionRelease(uep);
 			}
 			break;
 		default:
@@ -1931,6 +1983,7 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
 		LOG(ERR) << "DCCH message ignored, unhandled type="<<msg1->message.present
 			<<" "<<asnUlDcchMsg2Name(msg1->message.present);
 	}
+	gRANControl.rrcUplinkMessageInd(uep,bv,rbNum);
 }
 
 bool AsnUeId::eql(AsnUeId &other)
@@ -1946,6 +1999,7 @@ bool AsnUeId::eql(AsnUeId &other)
 
 void AsnUeId::asnParse(ASN::InitialUE_Identity &uid)
 {
+	mUeInitialId = uid;
 	switch (uid.present) {
 	case ASN::InitialUE_Identity_PR_imsi:
 		// A_SEQUENCE_OF(Digit_t) list

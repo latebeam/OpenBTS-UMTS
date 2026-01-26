@@ -212,7 +212,7 @@ void* RACHLoopAdapter(RadioModem *modem)
 
 		// if this is an access slot, then detect a RACH preamble.
   		modem->detectRACHPreamble(*((signalVector*) q->burst),q->burstTime,modem->mRACHThreshold);
-  		//if (detectRACHPreamble(*wBurst,wTime,mRACHThreshold)) 
+  		//if (detectRACHPreamble(*wBurst,wTime,mRACHThreshold))
         	//LOG(INFO) << "RACH Enrg: " << wTime << " " << avgPwr;
 
   		// if RACH message part is expected, the decode one of the 15 or 30 consecutive slots./
@@ -272,7 +272,7 @@ void* DCHLoopAdapter(DCHLoopInfo *dli)
 
         	if (slotIx == gFrameSlots-1) { //gots a frame, let's decode it
                 	// First, need to figure out TFCI
-                	int TFCI = findTfci(currDPDCH->tfciBits,currDCH->l1ul()->mNumTfc); 
+                	int TFCI = findTfci(currDPDCH->tfciBits,currDCH->l1ul()->mNumTfc);
 
                 	// (pat) The uplink spreading factor can depend on the TFC of this particular uplink vector.
                 	// We need to decode the DPCCH first then look up the SF based on the TFCI bits.  Someday.
@@ -280,11 +280,11 @@ void* DCHLoopAdapter(DCHLoopInfo *dli)
                 	int uplinkSpreadingCodeIndex = (1 << uplinkSpreadingFactorLog2)/4;
                 	// 4.3.1.2.1 of 25.213
                 	// DPDCH is always index of SF/4
-                	// N DPDCH is always a SF of 4, index is 1 if N < 2, 3 if N < 4, 2 if N < 6 
-                	// gonna assume single DPDCH per DCH                
+                	// N DPDCH is always a SF of 4, index is 1 if N < 2, 3 if N < 4, 2 if N < 6
+                	// gonna assume single DPDCH per DCH
 			LOG(NOTICE) << "numTFCI: " << currDCH->l1ul()->mNumTfc << " TFCI: " << TFCI << ", SF: " << (1 << uplinkSpreadingFactorLog2) << ", scram: " << uplinkScramblingCodeIndex << ", code: " << uplinkSpreadingCodeIndex << ", time:" << wTime;
                 	//LOG(INFO) << "TPC: " << currDPDCH->tpcBits[0] << " " << currDPDCH->tpcBits[1];
-			
+
                 	if (TFCI !=0) {
                         	currDCH->l1ul()->mReceived = true;
   				modem->decodeDPDCHFrame(*currDPDCH,uplinkScramblingCodeIndex,uplinkSpreadingFactorLog2,
@@ -519,8 +519,8 @@ void RadioModem::spread(BitVector &wBurst, int8_t *code, int codeLen, radioData_
         radioData_t *acc = ((i % 2 == 0) ? accI : accQ) + (i/2)*codeLen;
 	int8_t *codePtr = code;
 	radioData_t compositeGain = (2*(byt & 0x01)-1)*gain;
-        while(codePtr < codePtrEnd) { 
-            *acc += compositeGain * *codePtr++; 
+        while(codePtr < codePtrEnd) {
+            *acc += compositeGain * *codePtr++;
 	    acc++;
 	}
       }
@@ -601,7 +601,7 @@ signalVector* RadioModem::descramble(signalVector &wBurst, int8_t *codeI, int8_t
 signalVector *RadioModem::despread(signalVector &wBurst,
 				   const int8_t *code,
 			           int codeLength,
-				   bool useQ) 
+				   bool useQ)
 {
   int finalLength = wBurst.size()/codeLength;
   signalVector *retVec = new signalVector(finalLength);
@@ -815,14 +815,14 @@ bool RadioModem::decodeDCH(signalVector &wBurst,
 {
 	//LOG(INFO) << "decodeDCH start: " << wTime;
 	// correlate pilots on Q-channel for slot
-	int slotIx = wTime.TN();	
+	int slotIx = wTime.TN();
      	complex channel;
         float TOA;
-	signalVector *uplinkPilots = UplinkPilotWaveforms(uplinkScramblingCodeIndex, 
+	signalVector *uplinkPilots = UplinkPilotWaveforms(uplinkScramblingCodeIndex,
 							  0,
 							  numPilots,slotIx);
 	// FIXME: this start TOA should be adaptive based on previous TOA results
-	float startTOA = (float) mDPCHOffset+384; // uplink DCH is offset by 1024 chips 
+	float startTOA = (float) mDPCHOffset+384; // uplink DCH is offset by 1024 chips
 	startTOA += 10.0; // seems to be constant...Tx+Rx group delay of the RAD3 perhaps.
 	float SNR;
 	float corrWindow = 40.0;
@@ -832,7 +832,7 @@ bool RadioModem::decodeDCH(signalVector &wBurst,
 		corrWindow = 5.0;
 	}
 	SNR = estimateChannel(&wBurst,uplinkPilots,corrWindow*2+1,(startTOA-corrWindow),&channel,&TOA);
-	
+
  	const float idealCorrelationAmplitude = 2*uplinkPilots->size();
  	channel = channel/idealCorrelationAmplitude;
         TOA = TOA-384;
@@ -843,14 +843,14 @@ bool RadioModem::decodeDCH(signalVector &wBurst,
 
 	if (channel==complex(0,0)) channel = complex(1e6,1e6); // don't divide by zero.
 
-	signalVector rawData = rawBurst.segment(gSlotLen*slotIx,wBurst.size());	
+	signalVector rawData = rawBurst.segment(gSlotLen*slotIx,wBurst.size());
 	wBurst.copyTo(rawData);
 
 	//scaleVector(wBurst,complex(1.0,0.0)/channel);
  	delayVector(wBurst,-TOA); //round(-TOA));
 
 	// FIXME: we should use segment or alias to avoid copy operations
-	signalVector truncBurst(wBurst.begin(),0,gSlotLen); 
+	signalVector truncBurst(wBurst.begin(),0,gSlotLen);
         scaleVector(truncBurst,complex(1.0,0.0)/channel);
 
         if (!mUplinkScramblingCodes[uplinkScramblingCodeIndex])
@@ -864,7 +864,7 @@ bool RadioModem::decodeDCH(signalVector &wBurst,
 		   (int8_t *) mUplinkScramblingCodes[uplinkScramblingCodeIndex]->QCode()+gSlotLen*slotIx,
 		   &descrambleResult);
 
-        //if ((wTime.FN() % 100 == 0) && (!wTime.TN())) 
+        //if ((wTime.FN() % 100 == 0) && (!wTime.TN()))
 	//	LOG(INFO) << "despread DCH data: " << *despreadDCHData;
 
 	signalVector descrambleResultTFCITPC = descrambleResult.segment((1<<8)*0,(1<<8)*10);
@@ -875,8 +875,8 @@ bool RadioModem::decodeDCH(signalVector &wBurst,
                                         	     true);
         //LOG(INFO) << "desp stop: " << wTime;
 
-	//if (slotIx == 14) 
-	//	LOG(INFO) << "despread DCH ctrl: " << *despreadDCHControl << ", " << numPilots << " pilots should be: " << gPilotPatterns[numPilots-3][slotIx]; 
+	//if (slotIx == 14)
+	//	LOG(INFO) << "despread DCH ctrl: " << *despreadDCHControl << ", " << numPilots << " pilots should be: " << gPilotPatterns[numPilots-3][slotIx];
 
 	// FIXME: assume slot format 0...need to adapt accordingly
 	float bitscale = -0.5*(1.0/(float) (1 << 8)/2.0);
@@ -902,11 +902,11 @@ bool RadioModem::decodeDCH(signalVector &wBurst,
 		guessTOA = TOA;
         }
         else {
-		guessTOA = -10000.0; 
+		guessTOA = -10000.0;
 	}
-	
+
 	return true;
-}	
+}
 
 bool RadioModem::decodeDPDCHFrame(DPDCH &frame,
 				  int uplinkScramblingCodeIndex,
@@ -947,12 +947,12 @@ bool RadioModem::decodeDPDCHFrame(DPDCH &frame,
 	unsigned numBitsSlot = despreadDCHData->size()/gFrameSlots;
 	for (unsigned j = 0; j < gFrameSlots; j++) {
 	  float *dataBits = new float[numBitsSlot];
-	  for (unsigned i = 0; i < numBitsSlot; i++) { 
+	  for (unsigned i = 0; i < numBitsSlot; i++) {
 	      dataBits[i] = bitScale* ((*despreadDCHData)[i+numBitsSlot*j].real()) + 0.5;
           }
-          RxBitsBurst* dataBurst = new RxBitsBurst(uplinkSpreadingFactorLog2, 
-						   dataBits, 
-						   UMTS::Time(frame.frameTime.FN(),j), 0 /*TOA*/, 
+          RxBitsBurst* dataBurst = new RxBitsBurst(uplinkSpreadingFactorLog2,
+						   dataBits,
+						   UMTS::Time(frame.frameTime.FN(),j), 0 /*TOA*/,
 						   0 /*RSSI*/);
 	  //if (j == 0) LOG(INFO) << "rxbits: " << *(dynamic_cast<SoftVector*>(dataBurst));
           dataBurst->mTfciBits[0] = frame.tfciBits[0+2*j];
@@ -985,7 +985,7 @@ bool RadioModem::decodeDPDCHFrame(DPDCH &frame,
 #endif
 
 	delete despreadDCHData;
- 
+
 	return true;
 
 }
@@ -1011,7 +1011,7 @@ void RadioModem::receiveBurst(void)
 	RN_MEMLOG(signalVector,dataBurst);
   	complex *burstPtr = dataBurst->begin();
         for (unsigned int i=0; i<burstLen; i++) {
-	  *burstPtr++ = complex((float) ((radioData_t) (signed char) (*rp)), 
+	  *burstPtr++ = complex((float) ((radioData_t) (signed char) (*rp)),
 				(float) ((radioData_t) (signed char) (*(rp+1)))); //complex(dataI[i],dataQ[i]);
 	  rp++; rp++;
         }
@@ -1106,16 +1106,16 @@ void RadioModem::transmitSlot(UMTS::Time nowTime, bool &underrun)
   while (TxBitsBurst* next = (TxBitsBurst *) mTxQueue->getCurrentBurst(nowTime)) {
     //LOG(INFO) << "transmitFIFO: wrote burst " << next << " at time: " << nowTime;
     unsigned int startIx = (next->rightJustified()) ? (gSlotLen-(next->size()/2*next->SF())) : 0;
-    if (next->DCH()) //(next->SF()!=256) 
+    if (next->DCH()) //(next->SF()!=256)
 	LOG(INFO) << "time: " << nowTime << ", spreading " << next->log2SF() << ", " << next->codeIndex() << ", " << next->size() << ", " << next->rightJustified() << ", " << next->DCH();
-    spread(*next, 
+    spread(*next,
 	   (int8_t *) gOVSFTree.code (next->log2SF(),next->codeIndex()),
 	   next->SF(), waveformI+startIx, waveformQ+startIx, gSlotLen, next->DCH() ? mDCHAmplitude : mCCPCHAmplitude);
     receivedBursts[(1 << next->log2SF()) + (next->codeIndex() << 16)] = true;
     delete next;
   }
 
-#if 1 
+#if 1
   // stick in DPCCH pilots for any active DCH channels, UE needs these for synchronization in CELL_DCH state
   // need to stick in TPC bits and TFCI bits too.
   DCHListType::const_iterator DCHItr, DCHEnd;

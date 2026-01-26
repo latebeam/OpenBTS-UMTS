@@ -38,6 +38,10 @@ using namespace std;
 
 using namespace SIP;
 
+#include "RANControl.h"
+using namespace Control;
+extern RANControl gRANControl;
+
 #include <Logger.h>
 #undef WARNING
 
@@ -199,59 +203,24 @@ void Control::LocationUpdatingController(const GSM::L3LocationUpdatingRequest* l
 	unsigned newTMSI = 0;
 	if (!preexistingTMSI) newTMSI = gTMSITable.assign(IMSI,lur);
 
-	// Try to register the IMSI with Asterisk.
-	// This will be set true if registration succeeded in the SIP world.
-	bool success = false;
-	string RAND;
-	try {
-		SIPEngine engine(gConfig.getStr("SIP.Proxy.Registration").c_str(),IMSI);
-		LOG(DEBUG) << "waiting for registration";
-		success = engine.Register(SIPEngine::SIPRegister, &RAND); 
-	}
-	catch(SIPTimeout) {
-		LOG(ALERT) "SIP registration timed out.  Is the proxy running at " << gConfig.getStr("SIP.Proxy.Registration");
-		// Reject with a "network failure" cause code, 0x11.
-		DCCH->send(GSM::L3LocationUpdatingReject(0x11));
-		// HACK -- wait long enough for a response
-		// FIXME -- Why are we doing this?
-		sleep(4);
-		// Release the channel and return.
-		DCCH->send(GSM::L3ChannelRelease());
-		return;
-	}
+	// This functionality is disabled when external control enabled
+	if (gRANControl.enabled() == false)
+	{
+		// Try to register the IMSI with Asterisk.
+		// This will be set true if registration succeeded in the SIP world.
+		bool success = false;
+		string RAND;
 
-	// Did we get a RAND for challenge-response?
-	if (RAND.length() != 0) {
-		// Get the mobile's SRES.
-		LOG(INFO) << "sending " << RAND << " to mobile";
-		uint64_t uRAND;
-		uint64_t lRAND;
-		stringToUint(RAND, &uRAND, &lRAND);
-		DCCH->send(GSM::L3AuthenticationRequest(0,GSM::L3RAND(uRAND,lRAND)));
-		GSM::L3Message* msg = getMessage(DCCH);
-		GSM::L3AuthenticationResponse *resp = dynamic_cast<GSM::L3AuthenticationResponse*>(msg);
-		if (!resp) {
-			if (msg) {
-				LOG(WARNING) << "Unexpected message " << *msg;
-				delete msg;
-			}
-			// FIXME -- We should differentiate between wrong message and no message at all.
-			throw UnexpectedMessage();
-		}
-		LOG(INFO) << *resp;
-		uint32_t mobileSRES = resp->SRES().value();
-		delete msg;
-		// verify SRES 
-		try {
-			SIPEngine engine(gConfig.getStr("SIP.Proxy.Registration").c_str(),IMSI);
+		try
+		{
+			SIPEngine engine(gConfig.getStr("SIP.Proxy.Registration").c_str(), IMSI);
 			LOG(DEBUG) << "waiting for registration";
-			ostringstream os;
-			os << hex << mobileSRES;
-			string SRESstr = os.str();
-			success = engine.Register(SIPEngine::SIPRegister, &RAND, IMSI, SRESstr.c_str()); 
+			success = engine.Register(SIPEngine::SIPRegister, &RAND);
 		}
-		catch(SIPTimeout) {
-			LOG(ALERT) "SIP authentication timed out.  Is the proxy running at " << gConfig.getStr("SIP.Proxy.Registration");
+		catch (SIPTimeout)
+		{
+			LOG(ALERT)
+				"SIP registration timed out.  Is the proxy running at " << gConfig.getStr("SIP.Proxy.Registration");
 			// Reject with a "network failure" cause code, 0x11.
 			DCCH->send(GSM::L3LocationUpdatingReject(0x11));
 			// HACK -- wait long enough for a response
@@ -261,125 +230,195 @@ void Control::LocationUpdatingController(const GSM::L3LocationUpdatingRequest* l
 			DCCH->send(GSM::L3ChannelRelease());
 			return;
 		}
-	}
 
-	// This allows us to configure Open Registration
-	bool openRegistration = gConfig.defines("Control.LUR.OpenRegistration");
-
-	// Authentication.
-	// If no method is assigned, assume authentication is not required.
-	bool authenticateOK = gConfig.defines("Control.LUR.DefaultAuthenticationAccept");
-
-	 // RAND-SRES Exchange compared to cache?
-	if (gConfig.defines("Control.LUR.CachedAuthentication")) {
-		authenticateOK = authenticateViaCaching(IMSI,DCCH);
-		LOG(INFO) << "cache-based authentication for IMSI " << IMSI << " result " << authenticateOK;
-	}
-
-	if (!authenticateOK && !openRegistration) {
-		LOG(CRIT) << "failed authentication for IMSI " << IMSI;
-		DCCH->send(GSM::L3AuthenticationReject());
-		DCCH->send(GSM::L3ChannelRelease());
-		return;
-	}
-
-
-	// Query for IMEI?
-	if (IMSIAttach && gConfig.getBool("Control.LUR.QueryIMEI")) {
-		DCCH->send(GSM::L3IdentityRequest(GSM::IMEIType));
-		GSM::L3Message* msg = getMessage(DCCH);
-		GSM::L3IdentityResponse *resp = dynamic_cast<GSM::L3IdentityResponse*>(msg);
-		if (!resp) {
-			if (msg) {
-				LOG(WARNING) << "Unexpected message " << *msg;
-				delete msg;
+		// Did we get a RAND for challenge-response?
+		if (RAND.length() != 0)
+		{
+			// Get the mobile's SRES.
+			LOG(INFO) << "sending " << RAND << " to mobile";
+			uint64_t uRAND;
+			uint64_t lRAND;
+			stringToUint(RAND, &uRAND, &lRAND);
+			DCCH->send(GSM::L3AuthenticationRequest(0, GSM::L3RAND(uRAND, lRAND)));
+			GSM::L3Message *msg = getMessage(DCCH);
+			GSM::L3AuthenticationResponse *resp = dynamic_cast<GSM::L3AuthenticationResponse *>(msg);
+			if (!resp)
+			{
+				if (msg)
+				{
+					LOG(WARNING) << "Unexpected message " << *msg;
+					delete msg;
+				}
+				// FIXME -- We should differentiate between wrong message and no message at all.
+				throw UnexpectedMessage();
 			}
-			throw UnexpectedMessage();
-		}
-		LOG(INFO) << *resp;
-		if (!gTMSITable.IMEI(IMSI,resp->mobileID().digits()))
-			LOG(WARNING) << "failed access to TMSITable";
-		delete msg;
-	}
-
-	// Query for classmark?
-	if (IMSIAttach && gConfig.getBool("Control.LUR.QueryClassmark")) {
-		DCCH->send(GSM::L3ClassmarkEnquiry());
-		GSM::L3Message* msg = getMessage(DCCH);
-		GSM::L3ClassmarkChange *resp = dynamic_cast<GSM::L3ClassmarkChange*>(msg);
-		if (!resp) {
-			if (msg) {
-				LOG(WARNING) << "Unexpected message " << *msg;
-				delete msg;
+			LOG(INFO) << *resp;
+			uint32_t mobileSRES = resp->SRES().value();
+			delete msg;
+			// verify SRES
+			try
+			{
+				SIPEngine engine(gConfig.getStr("SIP.Proxy.Registration").c_str(), IMSI);
+				LOG(DEBUG) << "waiting for registration";
+				ostringstream os;
+				os << hex << mobileSRES;
+				string SRESstr = os.str();
+				success = engine.Register(SIPEngine::SIPRegister, &RAND, IMSI, SRESstr.c_str());
 			}
-			throw UnexpectedMessage();
+			catch (SIPTimeout)
+			{
+				LOG(ALERT)
+					"SIP authentication timed out.  Is the proxy running at " << gConfig.getStr("SIP.Proxy.Registration");
+				// Reject with a "network failure" cause code, 0x11.
+				DCCH->send(GSM::L3LocationUpdatingReject(0x11));
+				// HACK -- wait long enough for a response
+				// FIXME -- Why are we doing this?
+				sleep(4);
+				// Release the channel and return.
+				DCCH->send(GSM::L3ChannelRelease());
+				return;
+			}
 		}
-		LOG(INFO) << *resp;
-		const GSM::L3MobileStationClassmark2& classmark = resp->classmark();
-		if (!gTMSITable.classmark(IMSI,classmark))
-			LOG(WARNING) << "failed access to TMSITable";
-		delete msg;
-	}
 
-	// We fail closed unless we're configured otherwise
-	if (!success && !openRegistration) {
-		LOG(INFO) << "registration FAILED: " << mobileID;
-		DCCH->send(GSM::L3LocationUpdatingReject(gConfig.getNum("Control.LUR.UnprovisionedRejectCause")));
-		if (!preexistingTMSI) {
-			sendWelcomeMessage( "Control.LUR.FailedRegistration.Message",
-				"Control.LUR.FailedRegistration.ShortCode", IMSI,DCCH);
+		// This allows us to configure Open Registration
+		bool openRegistration = gConfig.defines("Control.LUR.OpenRegistration");
+
+		// Authentication.
+		// If no method is assigned, assume authentication is not required.
+		bool authenticateOK = gConfig.defines("Control.LUR.DefaultAuthenticationAccept");
+
+		// RAND-SRES Exchange compared to cache?
+		if (gConfig.defines("Control.LUR.CachedAuthentication"))
+		{
+			authenticateOK = authenticateViaCaching(IMSI, DCCH);
+			LOG(INFO) << "cache-based authentication for IMSI " << IMSI << " result " << authenticateOK;
 		}
+
+		if (!authenticateOK && !openRegistration)
+		{
+			LOG(CRIT) << "failed authentication for IMSI " << IMSI;
+			DCCH->send(GSM::L3AuthenticationReject());
+			DCCH->send(GSM::L3ChannelRelease());
+			return;
+		}
+
+		// Query for IMEI?
+		if (IMSIAttach && gConfig.getBool("Control.LUR.QueryIMEI"))
+		{
+			DCCH->send(GSM::L3IdentityRequest(GSM::IMEIType));
+			GSM::L3Message *msg = getMessage(DCCH);
+			GSM::L3IdentityResponse *resp = dynamic_cast<GSM::L3IdentityResponse *>(msg);
+			if (!resp)
+			{
+				if (msg)
+				{
+					LOG(WARNING) << "Unexpected message " << *msg;
+					delete msg;
+				}
+				throw UnexpectedMessage();
+			}
+			LOG(INFO) << *resp;
+			if (!gTMSITable.IMEI(IMSI, resp->mobileID().digits()))
+				LOG(WARNING) << "failed access to TMSITable";
+			delete msg;
+		}
+
+		// Query for classmark?
+		if (IMSIAttach && gConfig.getBool("Control.LUR.QueryClassmark"))
+		{
+			DCCH->send(GSM::L3ClassmarkEnquiry());
+			GSM::L3Message *msg = getMessage(DCCH);
+			GSM::L3ClassmarkChange *resp = dynamic_cast<GSM::L3ClassmarkChange *>(msg);
+			if (!resp)
+			{
+				if (msg)
+				{
+					LOG(WARNING) << "Unexpected message " << *msg;
+					delete msg;
+				}
+				throw UnexpectedMessage();
+			}
+			LOG(INFO) << *resp;
+			const GSM::L3MobileStationClassmark2 &classmark = resp->classmark();
+			if (!gTMSITable.classmark(IMSI, classmark))
+				LOG(WARNING) << "failed access to TMSITable";
+			delete msg;
+		}
+
+		// We fail closed unless we're configured otherwise
+		if (!success && !openRegistration)
+		{
+			LOG(INFO) << "registration FAILED: " << mobileID;
+			DCCH->send(GSM::L3LocationUpdatingReject(gConfig.getNum("Control.LUR.UnprovisionedRejectCause")));
+			if (!preexistingTMSI)
+			{
+				sendWelcomeMessage("Control.LUR.FailedRegistration.Message",
+								   "Control.LUR.FailedRegistration.ShortCode", IMSI, DCCH);
+			}
+			// Release the channel and return.
+			DCCH->send(GSM::L3ChannelRelease());
+			return;
+		}
+
+		// If success is true, we had a normal registration.
+		// Otherwise, we are here because of open registration.
+		// Either way, we're going to register a phone if we arrive here.
+
+		if (success)
+		{
+			LOG(INFO) << "registration SUCCESS: " << mobileID;
+		}
+		else
+		{
+			LOG(INFO) << "registration ALLOWED: " << mobileID;
+		}
+
+		// Send the "short name" and time-of-day.
+		if (IMSIAttach && gConfig.defines("UMTS.Identity.ShortName"))
+		{
+			DCCH->send(GSM::L3MMInformation(gConfig.getStr("UMTS.Identity.ShortName").c_str()));
+		}
+		// Accept. Make a TMSI assignment, too, if needed.
+		if (preexistingTMSI || !gConfig.getBool("Control.LUR.SendTMSIs"))
+		{
+			DCCH->send(GSM::L3LocationUpdatingAccept(gNodeB.LAI()));
+		}
+		else
+		{
+			assert(newTMSI);
+			DCCH->send(GSM::L3LocationUpdatingAccept(gNodeB.LAI(), newTMSI));
+			// Wait for MM TMSI REALLOCATION COMPLETE (0x055b).
+			GSM::L3Frame *resp = DCCH->recv(1000);
+			// FIXME -- Actually check the response type.
+			if (!resp)
+			{
+				LOG(NOTICE) << "no response to TMSI assignment";
+			}
+			else
+			{
+				LOG(INFO) << *resp;
+			}
+			delete resp;
+		}
+
+		// If this is an IMSI attach, send a welcome message.
+		if (IMSIAttach)
+		{
+			if (success)
+			{
+				sendWelcomeMessage("Control.LUR.NormalRegistration.Message",
+								   "Control.LUR.NormalRegistration.ShortCode", IMSI, DCCH);
+			}
+			else
+			{
+				sendWelcomeMessage("Control.LUR.OpenRegistration.Message",
+								   "Control.LUR.OpenRegistration.ShortCode", IMSI, DCCH);
+			}
+		}
+
 		// Release the channel and return.
 		DCCH->send(GSM::L3ChannelRelease());
-		return;
-	}
-
-	// If success is true, we had a normal registration.
-	// Otherwise, we are here because of open registration.
-	// Either way, we're going to register a phone if we arrive here.
-
-	if (success) {
-		LOG(INFO) << "registration SUCCESS: " << mobileID;
-	} else {
-		LOG(INFO) << "registration ALLOWED: " << mobileID;
-	}
-
-
-	// Send the "short name" and time-of-day.
-	if (IMSIAttach && gConfig.defines("UMTS.Identity.ShortName")) {
-		DCCH->send(GSM::L3MMInformation(gConfig.getStr("UMTS.Identity.ShortName").c_str()));
-	}
-	// Accept. Make a TMSI assignment, too, if needed.
-	if (preexistingTMSI || !gConfig.getBool("Control.LUR.SendTMSIs")) {
-		DCCH->send(GSM::L3LocationUpdatingAccept(gNodeB.LAI()));
-	} else {
-		assert(newTMSI);
-		DCCH->send(GSM::L3LocationUpdatingAccept(gNodeB.LAI(),newTMSI));
-		// Wait for MM TMSI REALLOCATION COMPLETE (0x055b).
-		GSM::L3Frame* resp = DCCH->recv(1000);
-		// FIXME -- Actually check the response type.
-		if (!resp) {
-			LOG(NOTICE) << "no response to TMSI assignment";
-		} else {
-			LOG(INFO) << *resp;
-		}
-		delete resp;
-	}
-
-	// If this is an IMSI attach, send a welcome message.
-	if (IMSIAttach) {
-		if (success) {
-			sendWelcomeMessage( "Control.LUR.NormalRegistration.Message",
-				"Control.LUR.NormalRegistration.ShortCode", IMSI, DCCH);
-		} else {
-			sendWelcomeMessage( "Control.LUR.OpenRegistration.Message",
-				"Control.LUR.OpenRegistration.ShortCode", IMSI, DCCH);
-		}
-	}
-
-
-	// Release the channel and return.
-	DCCH->send(GSM::L3ChannelRelease());
+	} // gRANControl.enabled()
 	return;
 }
 

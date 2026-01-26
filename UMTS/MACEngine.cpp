@@ -812,7 +812,7 @@ bool MacdSimple::flushUE()
 {
 	// Look in each logical channel.
 	// The ones that might have something in them are 1,2,3 and 5, but we'll just check all.
-        if (mUep->ueGetState() != stCELL_DCH) return false; 
+        if (mUep->ueGetState() != stCELL_DCH) return false;
 	RN_UE_FOR_ALL_RLC_DOWN(mUep,rbid,rlcp) {
 		URlcBasePdu *pdu = rlcp->rlcReadLowSide();
 		if (! pdu) {continue;}

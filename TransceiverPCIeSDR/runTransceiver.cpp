@@ -1,10 +1,13 @@
 /*
+ * Based on TransceiverUHD/runTransceiver.cpp
+ *
  * OpenBTS provides an open source alternative to legacy telco protocols and
  * traditionally complex, proprietary hardware systems.
  *
  * Copyright 2008, 2009 Free Software Foundation, Inc.
  * Copyright 2010 Kestrel Signal Processing, Inc.
  * Copyright 2014 Range Networks, Inc.
+ * Copyright 2026 Late Beam
  * 
  * This software is distributed under the terms of the GNU General Public 
  * License version 3. See the COPYING and NOTICE files in the current
@@ -22,7 +25,7 @@
 #include <Configuration.h>
 
 #include "Transceiver.h"
-#include "UHDDevice.h"
+#include "PCIeSDRDevice.h"
 
 /* Default maximum expected delay spread in symbols */
 #define DEFAULT_MAX_DELAY         50
@@ -31,8 +34,9 @@
 #define DEVICE_RATE               6.25e6
 
 ConfigurationKeyMap getConfigurationKeys2();
-ConfigurationTable gConfig("/etc/OpenBTS/OpenBTS-UMTS.db",
-                           "transceiver", getConfigurationKeys2());
+
+ConfigurationTable gConfig("./OpenBTS-UMTS.db",
+                           "Open", getConfigurationKeys2());
 
 volatile bool gbShutdown = false;
 
@@ -58,9 +62,10 @@ static void register_signal_handlers()
 /* Logging check in the configuration is mandatory */
 static bool init_config()
 {
+  
   try {
     std::cout << "** Configuring logger" << std::endl;
-    gLogInit("transceiver", gConfig.getStr("Log.Level").c_str(), LOG_LOCAL7);
+    gLogInitTransceiver("transceiver", gConfig.getStr("Log.LevelTransceiver").c_str(), LOG_LOCAL7);
   } catch (ConfigurationTableKeyNotFound e) {
     LOG(EMERG) << "** Required configuration parameter " << e.key()
                << " not defined, aborting";
@@ -112,9 +117,10 @@ static std::string init_devaddr()
   return addr;
 }
 
+// tässä tulee index
 int main(int argc, char *argv[])
 {
-  UHDDevice *usrp = NULL;
+  PCIeSDRDevice *sdr_device = NULL;
   RadioDevice *dev = NULL;
   Transceiver *trx = NULL;
   RadioInterface *radio = NULL;
@@ -122,6 +128,19 @@ int main(int argc, char *argv[])
   int max_delay;
   bool found, extref;
   std::string devaddr;
+
+  int transceiver_index = 0; // Default: 0 is ok index
+
+  std::cout << "argc = " << argc << std::endl;
+  std::vector<std::string> args(argv + 1, argv + argc);
+  
+  // Quick hack for parsing as there are only 2 params and the first is not used
+  for (size_t i = 0; i < args.size(); ++i)
+  {
+    if (i == 1)
+      transceiver_index = std::stoi(args[i]);
+  }
+  std::cout << "transceiver_index = " << transceiver_index << std::endl;
 
   /* Capture termination signals */
   register_signal_handlers();
@@ -143,12 +162,12 @@ int main(int argc, char *argv[])
     std::cout << "** Using internal clock reference" << std::endl;
 
   std::cout << "** Searching for USRP device " << devaddr << std::endl;
-  usrp = new UHDDevice(DEVICE_RATE);
-  found = usrp->open(devaddr, extref);
+  sdr_device = new PCIeSDRDevice(DEVICE_RATE);
+  found = sdr_device->open(devaddr, extref,transceiver_index);
 
   if (found) {
     std::cout << "** Device ready" << std::endl;
-    dev = (RadioDevice *) usrp;
+    dev = (RadioDevice *) sdr_device;
   } else {
     std::cout << "** Device not available" << std::endl;
     goto shutdown;
@@ -170,7 +189,7 @@ int main(int argc, char *argv[])
 shutdown:
   delete trx;
   delete radio;
-  delete usrp;
+  delete sdr_device;
 
   return 0;
 }

@@ -52,8 +52,10 @@ namespace ASN {
 };
 #include "URRC.h"
 
-#define PAT_TEST 0 
+#define PAT_TEST 0
 
+#define SIB1_PS_DOMAIN 1
+#define SIB1_CS_DOMAIN 1
 
 using namespace std;
 using namespace UMTS;
@@ -622,7 +624,7 @@ void BeaconConfig::encodeSIBPhase2(
 long UMTSConfig::getULInterference() const
 {
 	// TODO UMTS -- This needs to really calculate something.
-	return -70;
+	return -95;
 }
 
 static long *newlong(long value) {
@@ -906,6 +908,8 @@ void BeaconConfig::regenerate()
 	// LAC is an OCTET_STRING
 	mSIB1.cn_CommonGSM_MAP_NAS_SysInfo.buf = (uint8_t*)LAC;
 	mSIB1.cn_CommonGSM_MAP_NAS_SysInfo.size = 2;
+	
+#if SIB1_PS_DOMAIN
 	// cn_DomainSysInfoList
 	// See 3GPP 24.008 10.5.1.12.2-3.  Domain-specific NAS sysinfo
 	// For now, we are advertising PS domain only.
@@ -936,26 +940,26 @@ void BeaconConfig::regenerate()
 	dsi->cn_DRX_CycleLengthCoeff = gConfig.getNum("UMTS.CN-DSI.CycleLengthCoeff"); 	// FIXME -- What does this mean?!
 	// add the element to the list
 	ASN_SEQUENCE_ADD(&mSIB1.cn_DomainSysInfoList.list,dsi);
-
-#if PAT_TEST
-	if (1) {
-		// Advertise a CS domain also.  Pat put this back in 10-23-2012
-		CN_DomainSysInfo *dsi2 = RN_CALLOC(CN_DomainSysInfo);
-        	asn_long2INTEGER(&(dsi2->cn_DomainIdentity), CN_DomainIdentity_cs_domain);
-        	dsi2->cn_Type.present = CN_DomainSysInfo__cn_Type_PR_gsm_MAP;
-        	uint8_t *CS_domain_specific_info = (uint8_t*)calloc(2,sizeof(char));
-		// octet 0 is T3212 in deci-hours.
-		CS_domain_specific_info[0] = gConfig.getNum("UMTS.Timer.T3212");
-		// octet 1 is attach-detach allowed flag: 1 means "MSs shall apply IMSI attach and detach procedure".
-		CS_domain_specific_info[1] = 1;
-		dsi2->cn_Type.choice.gsm_MAP.buf = CS_domain_specific_info;
-        	dsi2->cn_Type.choice.gsm_MAP.size = 2;
-		// DRX_CycleLengthCoeff: "A coefficient in the formula to count the paging occasions to be used by a specific UE (specified
-		//	in  3GPP TS 25.304: "UE Procedures in Idle Mode and Procedures for Cell Reselection in Connected Mode".)
-        	dsi2->cn_DRX_CycleLengthCoeff = gConfig.getNum("UMTS.CN-DSI.CycleLengthCoeff");        // FIXME -- What does this mean?!
-        	ASN_SEQUENCE_ADD(&mSIB1.cn_DomainSysInfoList.list,dsi2);             
-	}
 #endif
+
+#if SIB1_CS_DOMAIN
+	// Advertise a CS domain also.  Pat put this back in 10-23-2012
+	CN_DomainSysInfo *dsi2 = RN_CALLOC(CN_DomainSysInfo);
+    	asn_long2INTEGER(&(dsi2->cn_DomainIdentity), CN_DomainIdentity_cs_domain);
+    	dsi2->cn_Type.present = CN_DomainSysInfo__cn_Type_PR_gsm_MAP;
+    	uint8_t *CS_domain_specific_info = (uint8_t*)calloc(2,sizeof(char));
+	// octet 0 is T3212 in deci-hours.
+	CS_domain_specific_info[0] = gConfig.getNum("UMTS.Timer.T3212");
+	// octet 1 is attach-detach allowed flag: 1 means "MSs shall apply IMSI attach and detach procedure".
+	CS_domain_specific_info[1] = 1;
+	dsi2->cn_Type.choice.gsm_MAP.buf = CS_domain_specific_info;
+    	dsi2->cn_Type.choice.gsm_MAP.size = 2;
+	// DRX_CycleLengthCoeff: "A coefficient in the formula to count the paging occasions to be used by a specific UE (specified
+	//	in  3GPP TS 25.304: "UE Procedures in Idle Mode and Procedures for Cell Reselection in Connected Mode".)
+    	dsi2->cn_DRX_CycleLengthCoeff = gConfig.getNum("UMTS.CN-DSI.CycleLengthCoeff");        // FIXME -- What does this mean?!
+    	ASN_SEQUENCE_ADD(&mSIB1.cn_DomainSysInfoList.list,dsi2);             
+#endif
+
 
 	// (pat) I tried taking this out but was not sure if it changed the blackberry SIB1 report or not.
 	// Everything else is optional, so ignore it.
@@ -1205,15 +1209,18 @@ void BeaconConfig::regenerate()
 		ASN_SEQUENCE_ADD(&prach_SI->ac_To_ASC_MappingTable->list,ac);
 	}
 
+	int cpichTxPower = gConfig.getNum("UMTS.CPICH.TxPower");
+	int prachPowerOffsetPowerRampStep = gConfig.getNum("UMTS.PRACH.PowerOffset.PowerRampStep");
+
 	//  mode specific information - all of its elements are optional but we have to pick a type
 	//  Not convinced this is optional...adding AICH parameters was required to make phone work.
 	prach_SI->modeSpecificInfo.present = PRACH_SystemInformation__modeSpecificInfo_PR_fdd;
 	prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = RN_CALLOC(ASN::PrimaryCPICH_TX_Power_t);
-        *prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = 10; //dBm
+    *prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = cpichTxPower; //dBm
 	prach_SI->modeSpecificInfo.choice.fdd.constantValue = RN_CALLOC(ASN::ConstantValue_t);
-        *prach_SI->modeSpecificInfo.choice.fdd.constantValue = -10;
+    *prach_SI->modeSpecificInfo.choice.fdd.constantValue = -10;
 	prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset = RN_CALLOC(ASN::PRACH_PowerOffset);
-	prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->powerRampStep = 1;
+	prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->powerRampStep = prachPowerOffsetPowerRampStep;
 	prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->preambleRetransMax = 64;
 	prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters = RN_CALLOC(ASN::RACH_TransmissionParameters);
 	prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->mmax = 32;
@@ -1412,7 +1419,7 @@ void BeaconConfig::regenerate()
 	//*dpl = gConfig.getNum("UMTS.PRACH.DynamicPersistenceLevel");	// TODO UMTS -- what does this mean?
 	DynamicPersistenceLevel_t *dpl = newlong(gConfig.getNum("UMTS.PRACH.DynamicPersistenceLevel"));
 	ASN_SEQUENCE_ADD(&mSIB7.prach_Information_SIB5_List.list,dpl);
-	mSIB7.expirationTimeFactor = newlong(1);
+	mSIB7.expirationTimeFactor = newlong(8);
 
 	// Type 8-10 are obsolete.
 

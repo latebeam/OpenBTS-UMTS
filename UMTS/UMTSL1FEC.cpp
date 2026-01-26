@@ -719,16 +719,16 @@ void TrCHFECEncoder::writeHighSide(const TransportBlock &tblock)
         unsigned outsize = this->mRadioFrameSz*this->getNumRadioFrames();
         unsigned insize = this->mCodedBkSz;
 	BitVector h(outsize);
-        if (insize != outsize) 
+        if (insize != outsize)
                 rateMatchFunc<char>(g,h,1);
-        else 
+        else
                 g.copyTo(h);
 
 	// not doing insertion of DTX  (pat) doesnt go here?
 	// 4.2.9
         //BitVector h; // This is 3-valued, but for now, just pad with zeros.
 	// Since we only either the max. size of possible transport format combinatiors or transmit nothing, DTX is not needed.
-        
+
         /*if (insize == outsize) {
                 h = frame;
         } else {

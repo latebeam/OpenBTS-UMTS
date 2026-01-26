@@ -88,7 +88,7 @@ L3MMMessage* GSM::L3MMFactory(L3MMMessage::MessageType MTI)
 
 L3MMMessage * GSM::parseL3MM(const L3Frame& source)
 {
-	L3MMMessage::MessageType MTI = (L3MMMessage::MessageType)(0xbf & source.MTI());
+	L3MMMessage::MessageType MTI = (L3MMMessage::MessageType)(0x3F & source.MTI());
 	LOG(DEBUG) << "parseL3MM MTI=" << MTI;
 
 	L3MMMessage *retVal = L3MMFactory(MTI);

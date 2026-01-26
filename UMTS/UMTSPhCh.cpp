@@ -390,7 +390,7 @@ void PhCh::toAsnUL_DPCH_Info(ASN::UL_DPCH_Info *iep)
 	iep->ul_DPCH_PowerControlInfo->choice.fdd.dpcch_PowerOffset = -3; //-6;/*-82 to -3*/ 
         iep->ul_DPCH_PowerControlInfo->choice.fdd.pc_Preamble = 0; /*long, 0-7*/
         iep->ul_DPCH_PowerControlInfo->choice.fdd.sRB_delay = 0; /*long, 0-7*/
-        iep->ul_DPCH_PowerControlInfo->choice.fdd.powerControlAlgorithm.present = ASN::PowerControlAlgorithm_PR_algorithm2; 
+        iep->ul_DPCH_PowerControlInfo->choice.fdd.powerControlAlgorithm.present = ASN::PowerControlAlgorithm_PR_algorithm2;
 
 	// v struct UL_DPCH_Info__modeSpecificInfo { } modeSpecificInfo;
 	// . UL_DPCH_Info__modeSpecificInfo_PR present;

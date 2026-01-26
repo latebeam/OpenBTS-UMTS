@@ -19,13 +19,14 @@
 
 #include <Configuration.h>
 // Load configuration from a file.
-ConfigurationTable gConfig("/etc/OpenBTS/OpenBTS-UMTS.db","OpenBTS-UMTS", getConfigurationKeys());
+ConfigurationTable gConfig("./OpenBTS-UMTS.db","OpenBTS-UMTS", getConfigurationKeys());
 
 #include <TRXManager.h>
 #include <UMTSConfig.h>
 #include <SIPInterface.h>
 #include <TransactionTable.h>
 #include <ControlCommon.h>
+#include <RANControl.h>
 
 #include <Logger.h>
 #include <CLI.h>
@@ -67,6 +68,9 @@ Control::TMSITable gTMSITable(gConfig.getStr("Control.Reporting.TMSITable").c_st
 // The transaction table.
 Control::TransactionTable gTransactionTable(gConfig.getStr("Control.Reporting.TransactionTable").c_str());
 
+// External RAN control interface instance
+Control::RANControl gRANControl;
+
 // The global SIPInterface object.
 SIP::SIPInterface gSIPInterface;
 
@@ -85,27 +89,65 @@ void purgeConfig(void*,int,char const*, char const*, sqlite3_int64)
 	gNodeB.regenerateBeacon();
 }
 
-
-
 const char* transceiverPath = "./transceiver";
 
 pid_t gTransceiverPid = 0;
 
-void startTransceiver()
+void startTransceiver(int transceiverIndex)
 {
 	// Start the transceiver binary, if the path is defined.
 	// If the path is not defined, the transceiver must be started by some other process.
 	char TRXnumARFCN[4];
-	sprintf(TRXnumARFCN,"%1d",(int)gConfig.getNum("UMTS.Radio.ARFCNs"));
+	sprintf(TRXnumARFCN,"%1d",(int)gConfig.getNum("UMTS.Radio.ARFCNs"),transceiverIndex);
+	char TRXIndex[4];
+	sprintf(TRXIndex,"%3d",transceiverIndex);
 	LOG(NOTICE) << "starting transceiver " << transceiverPath << " " << TRXnumARFCN;
 	gTransceiverPid = vfork();
 	LOG_ASSERT(gTransceiverPid>=0);
 	if (gTransceiverPid==0) {
 		// Pid==0 means this is the process that starts the transceiver.
-		execlp(transceiverPath,transceiverPath,TRXnumARFCN,NULL);
+		execlp(transceiverPath,transceiverPath,TRXnumARFCN,TRXIndex,NULL);
 		LOG(EMERG) << "cannot find " << transceiverPath;
 		_exit(1);
 	}
+}
+
+// Returns tranceiver index
+int ParseRANControlParams(int argc, char* argv[]) {
+    // Store arguments in a vector for convenience
+    std::vector<std::string> args(argv + 1, argv + argc);
+
+    unsigned int iIndex;
+	std::string sCellId;
+    std::string sRemoteIp;
+	unsigned int iRemotePort;
+
+    for (size_t i = 0; i < args.size(); ++i) {
+		if (args[i] == "--index" && i + 1 < args.size()) {            
+			unsigned long temp = std::stoul(args[++i]);
+			if (temp > 255) {
+				std::cerr << "Value out of range \n";
+				return -1;
+			}			
+			iIndex = temp;			
+			} 
+        else if (args[i] == "--cellid" && i + 1 < args.size()) {
+            sCellId = args[++i];
+        } else if (args[i] == "--ip" && i + 1 < args.size()) {
+            sRemoteIp = args[++i];
+        } else if (args[i] == "--port" && i + 1 < args.size()) {
+            iRemotePort = std::stoul(args[++i]);
+        }
+    }
+
+    std::cout << "Index         : " << iIndex << "\n";
+    std::cout << "sCellId       : " << sCellId << "\n";
+    std::cout << "sIp           : " << sRemoteIp << "\n";
+	std::cout << "iRemotePort   : " << iRemotePort << "\n";
+
+	gRANControl.setParams(iIndex,sCellId,sRemoteIp,iRemotePort);	
+	
+    return iIndex;
 }
 
 
@@ -136,6 +178,12 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
+	int transceiverIndex = ParseRANControlParams(argc,argv);
+	if (transceiverIndex < 0) {
+		LOG(ALERT) << "not valid transceiverIndex = " << transceiverIndex;
+		exit(1);
+	}
+
 
 	//createStats();
 
@@ -153,6 +201,8 @@ int main(int argc, char *argv[])
 		//gReports.incr("OpenBTS.Exit.CLI.Socket");
 		exit(1);
 	}
+
+	gRANControl.start();
 
 	try {
 	COUT("\n\n" << gOpenWelcome << "\n");
@@ -177,18 +227,17 @@ int main(int argc, char *argv[])
 
 	COUT("Starting the transceiver..." << endl);	// (pat) 11-9-2012 Taking this out causes OpenBTS-UMTS to malfunction!  Intermittently.
 	//LOG(INFO) << "Starting the transceiver...";
-	startTransceiver();	// (pat) This is now a no-op because transceiver is built-in.
+	startTransceiver(transceiverIndex);	// (pat) This is now a no-op because transceiver is built-in.
 	sleep(5);
 	// Start the SIP interface.
 	LOG(INFO) << "Starting the SIP interface...";
 	gSIPInterface.start();
 
-
 	//
 	// Configure the radio.
 	//
-        Thread DCCHControlThread;
-        DCCHControlThread.start((void*(*)(void*))Control::DCCHDispatcher,NULL);
+	Thread DCCHControlThread;
+	DCCHControlThread.start((void*(*)(void*))Control::DCCHDispatcher,NULL);
 
 	// Set up the interface to the radio.
 	// Get a handle to the C0 transceiver interface.
@@ -234,8 +283,9 @@ int main(int argc, char *argv[])
 	  gsm_band = 10;
 	}
 
+	gRANControl.cellSetupInd(true);
 
-        C0radio->powerOn();
+    C0radio->powerOn();
 	C0radio->setPower(gConfig.getNum("UMTS.Radio.PowerManager.MinAttenDB"));
 	// Turn on and power up.
 
@@ -259,12 +309,15 @@ int main(int argc, char *argv[])
 	gNodeB.start(C0radio);
 
 	struct sockaddr_un cmdSockName;
-	cmdSockName.sun_family = AF_UNIX;
-	const char* sockpath = gConfig.getStr("CLI.SocketPath").c_str();
-	char rmcmd[strlen(sockpath)+5];
-	sprintf(rmcmd,"rm -f %s",sockpath);
+	cmdSockName.sun_family = AF_UNIX;	
+	std::string sockpath = gConfig.getStr("CLI.SocketPath").c_str();
+	char rmcmd[strlen(sockpath.c_str())+5];
+	rmcmd[0] = '\0';
+	LOG(INFO) "binding CLI datagram socket at " << sockpath;	
+	sprintf(rmcmd,"rm -f %s",sockpath.c_str());
+	LOG(INFO) "cmd " << rmcmd;
 	if (system(rmcmd)) {}	// The 'if' shuts up gcc warnings.
-	strcpy(cmdSockName.sun_path,sockpath);
+	strcpy(cmdSockName.sun_path,sockpath.c_str());
 	LOG(INFO) "binding CLI datagram socket at " << sockpath;
 	if (bind(sock, (struct sockaddr *) &cmdSockName, sizeof(struct sockaddr_un))) {
 		perror("binding name to cmd datagram socket");

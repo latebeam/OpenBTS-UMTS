@@ -240,7 +240,7 @@ private:
 		unsigned txqsize() { return mTxQueue->size(); }
 
 	private:
- 
+
        	int mDelaySpread;
         int mDPCCHCorrelationWindow;
         int mDPCCHSearchSize;

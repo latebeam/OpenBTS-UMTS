@@ -35,7 +35,13 @@
 	Log(LOG_##level).get() << pthread_self() \
 	<< timestr() << " " __FILE__  ":"  << __LINE__ << ":" << __FUNCTION__ << ": "
 
+#ifdef TRANSCEIVER
+//#warning TRANCEIVER logging
+#define IS_LOG_LEVEL(wLevel) (gGetLoggingLevelTransceiver(__FILE__)>=LOG_##wLevel)
+#else
+//#warning Normal logging
 #define IS_LOG_LEVEL(wLevel) (gGetLoggingLevel(__FILE__)>=LOG_##wLevel)
+#endif
 
 #ifdef NDEBUG
 #define LOG(wLevel) \
@@ -123,8 +129,12 @@ std::list<std::string> gGetLoggerAlarms();		///< Get a copy of the recent alarm 
 //@{
 /** Initialize the global logging system. */
 void gLogInit(const char* name, const char* level=NULL, int facility=LOG_USER);
+/** Initialize the global logging system for Transceiver. */
+void gLogInitTransceiver(const char* name, const char* level=NULL, int facility=LOG_USER);
 /** Get the logging level associated with a given file. */
 int gGetLoggingLevel(const char *filename=NULL);
+/** Get the logging level associated with a given file. */
+int gGetLoggingLevelTransceiver(const char *filename=NULL);
 /** Allow early logging when still in constructors */
 void gLogEarly(int level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 //@}

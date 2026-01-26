@@ -104,8 +104,7 @@ const std::string timestr()
 	struct tm tm;
 	gettimeofday(&tv,NULL);
 	localtime_r(&tv.tv_sec,&tm);
-	unsigned tenths = tv.tv_usec / 100000;	// Rounding down is ok.
-	return format(" %02d:%02d:%02d.%1d",tm.tm_hour,tm.tm_min,tm.tm_sec,tenths);
+	return format(" %02d:%02d:%02d.%6d",tm.tm_hour,tm.tm_min,tm.tm_sec,tv.tv_usec);
 }
 
 // High resolution sleep for the specified time.

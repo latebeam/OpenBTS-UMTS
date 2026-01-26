@@ -39,7 +39,7 @@ namespace ASN {
 extern FILE *gLogToFile;
 
 namespace UMTS {
-void handleRrcConnectionRequest(ASN::RRCConnectionRequest_t *msg);	// This kinda sucks.
+void handleRrcConnectionRequest(BitVector &tb, ASN::RRCConnectionRequest_t *msg);	// This kinda sucks.
 
 // Return rand in the range 0..maxval inclusive.
 static int rangerand(int minval, int maxval, unsigned *pseed)
@@ -418,11 +418,16 @@ int rrcTest(int argc, char** argv, ostream& os)
 		// no one is listening, but you can see it get fragmented by the CCCH RLC,
 		// have the MAC header attached, and go through the encoder.
 		gFecTestMode = 1;	// bursts sent on FACH will come back on RACH.
+		
+		BitVector bitVector;
+		bitVector.clear();
+
 		ASN::RRCConnectionRequest_t ccrmsg;
 		testCreateRRCConnectionRequest(&ccrmsg);
-		handleRrcConnectionRequest(&ccrmsg);
+
+		handleRrcConnectionRequest(bitVector,&ccrmsg);
 		// Do it again, to see the sequence number stays the same.
-		handleRrcConnectionRequest(&ccrmsg);
+		handleRrcConnectionRequest(bitVector,&ccrmsg);
 	} else if (0==strcmp(subcmd,"3")) {
 		// Test the RRC Connection Request/Setup more thoroughly,
 		// by encoding the RRC Connection Request as an uplink message,

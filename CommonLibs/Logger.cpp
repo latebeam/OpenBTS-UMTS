@@ -25,12 +25,14 @@
 #include "Logger.h"
 #include "Threads.h"	// pat added
 
+#define APPEND_LOGS 1
 
 using namespace std;
 
 // Reference to a global config table, used all over the system.
 extern ConfigurationTable gConfig;
 
+int gLogLevelTransceiver = 0;
 
 /**@ The global alarms table. */
 //@{
@@ -108,6 +110,10 @@ int getLoggingLevel(const char* filename)
 	return lookupLevel("Log.Level");
 }
 
+int gGetLoggingLevelTransceiver(const char* filename)
+{
+	return gLogLevelTransceiver;
+}
 
 
 int gGetLoggingLevel(const char* filename)
@@ -239,7 +245,11 @@ void gLogInit(const char* name, const char* level, int facility)
 	if (gLogToFile==0 && str.length() && 0==strncmp(gCmdName,"Open",4)) {
 		const char *fn = str.c_str();
 		if (fn && *fn && strlen(fn)>3) {	// strlen because a garbage char is getting in sometimes.
+#if APPEND_LOGS
+			gLogToFile = fopen(fn,"a");
+#else
 			gLogToFile = fopen(fn,"w"); // New log file each time we start.
+#endif
 			if (gLogToFile) {
 				time_t now;
 				time(&now);
@@ -254,6 +264,40 @@ void gLogInit(const char* name, const char* level, int facility)
 	openlog(name,0,facility);
 }
 
+void gLogInitTransceiver(const char* name, const char* level, int facility)
+{
+	// Set the level if one has been specified.
+	if (level) {
+		gConfig.set("Log.LevelTransceiver",level);
+	}
+
+	std::cout << "Transceiver log Level: " << level << std::endl;
+
+	gLogLevelTransceiver = levelStringToInt(level);
+	// Both the transceiver and OpenBTS use this same facility, but only OpenBTS/OpenBTS-UMTS may use this log file:
+	string str = gConfig.getStr("Log.FileTransceiver");
+    cout << "gLogInitTransceiver name = " << name << "Transceiver log = " << str << " command = " << gCmdName << endl;
+	if (gLogToFile==0 && str.length() && 0==strncmp(gCmdName,"Open",4)) {
+		const char *fn = str.c_str();
+		if (fn && *fn && strlen(fn)>3) {	// strlen because a garbage char is getting in sometimes.
+#if APPEND_LOGS
+			gLogToFile = fopen(fn,"a");
+#else
+			gLogToFile = fopen(fn,"w"); // New log file each time we start.
+#endif
+			if (gLogToFile) {
+				time_t now;
+				time(&now);
+				fprintf(gLogToFile,"Transceiver Starting  at %s level %s",level,ctime(&now));
+				fflush(gLogToFile);
+				std::cout << "Transceiver Logging to file: " << fn << "\n";
+			}
+		}
+	}
+
+	// Open the log connection.
+	openlog(name,0,facility);
+}
 
 void gLogEarly(int level, const char *fmt, ...)
 {
