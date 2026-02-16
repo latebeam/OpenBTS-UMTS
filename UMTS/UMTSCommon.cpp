@@ -23,8 +23,23 @@ unsigned UMTS::channelFreqKHz(UMTSBand band, unsigned ARFCN)
 {
 	switch (band) {
 		case UMTS850:
-			assert((ARFCN<=4458) && (ARFCN>=4357));
-			return ARFCN*1000/5;
+			if (ARFCN == 1007)
+				return 871500;
+			else if (ARFCN == 1012)
+				return 872500;
+			else if (ARFCN == 1032)
+				return 876500;
+			else if (ARFCN == 1037)
+				return 877500;
+			else if (ARFCN == 1062)
+				return 882500;
+			else if (ARFCN == 1087)
+				return 887500;
+			else
+			{
+				assert((ARFCN<=4458) && (ARFCN>=4357));
+				return ARFCN*1000/5;
+			}
 		case UMTS900:
                         assert((ARFCN<=3088) && (ARFCN>=2937));
                         return (ARFCN+340*5)*1000/5;
