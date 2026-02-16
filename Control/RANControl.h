@@ -103,7 +103,7 @@ public:
     void sendLoop();
 
     void cellSetupInd(bool transmitting);
-    void rrcConnectionSetupReqInd(UEInfo *uep, const BitVector &bitVector);
+    void sendRRCIndMsg(UEInfo *uep, const BitVector &bitVector);
     void rrcUplinkMessageInd(UEInfo *uep, const ByteVector &byteVector,unsigned rbNum);
 };
 

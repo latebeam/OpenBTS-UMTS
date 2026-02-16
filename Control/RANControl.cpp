@@ -86,8 +86,7 @@ void RANControl::receiveLoop()
         usleep(500*1000);
     }
     
-    while (mRunning) {        
-		// Receive is non blocking
+    while (mRunning) {
         size_t headerSize = sizeof(sRanControlMsgHeaderType);
         std::string strHeader = mTCPClient->receiveData(headerSize);        
         if(strHeader.size() == headerSize)
@@ -99,10 +98,6 @@ void RANControl::receiveLoop()
             LOG(INFO) << "strData Size: " << strData.size();
             handleReceiveMessages(header, strHeader + strData);
         }
-        else {
-            // 10 ms            
-            usleep(10*1000);            
-        }           				
 	}
 }
 
@@ -431,9 +426,9 @@ void RANControl::cellSetupInd(bool transmitting)
     mRANControlSendQueue.write(senderMsg);
 }
 
- void RANControl::rrcConnectionSetupReqInd(UEInfo *uep, const BitVector &bitVector)
+ void RANControl::sendRRCIndMsg(UEInfo *uep, const BitVector &bitVector)
  {
-    LOG(INFO) << "RRC Connection Setup Request bitVector = " << bitVector.str();
+    LOG(INFO) << "RRC Ind Msg bitVector = " << bitVector.str();
     uint32_t msgLen = 0;
     ByteVector byteVector((bitVector.size()/8) + 1);
     byteVector.setAppendP(0,0);

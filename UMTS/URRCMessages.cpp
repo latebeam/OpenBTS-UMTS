@@ -1481,7 +1481,7 @@ static void handleSecurityModeFailure(UEInfo*uep, ASN::SecurityModeFailure_t *se
 	uep->sgsnHandleSecurityModeComplete(false);
 }
 
-static void handleCellUpdate(ASN::CellUpdate_t *msg)
+static void handleCellUpdate(BitVector &tb, ASN::CellUpdate_t *msg)
 {
 	// This message sends a whole bunch of possible errors.  Lets print them out.
 	bool srbErr = msg->am_RLC_ErrorIndicationRb2_3or4;
@@ -1544,7 +1544,15 @@ static void handleCellUpdate(ASN::CellUpdate_t *msg)
                 //}
 		// Dont need this printf.  The START value is not supposed to change.  It was a bug that was changing it.
 		// printf("actual START value is: %u\n", uep->integrity.getStart());
-		sendCellUpdateConfirm(uep);
+		if (gRANControl.enabled())
+		{
+			gRANControl.sendRRCIndMsg(uep,tb);
+		}
+		else
+		{
+			sendCellUpdateConfirm(uep);
+		}
+
 	}
 	else {
 		// This is the first we have heard from this UE.  This is illegal.
@@ -1588,12 +1596,17 @@ void handleRrcConnectionRequest(BitVector &tb, ASN::RRCConnectionRequest_t *msg)
 	// which gets wrapped in an RRC direct transfer, which must not be integrity protected.
 	uep->integrity.integrityStop();	// Redudant with code in ueSetState, but make sure.
 
-	gRANControl.rrcConnectionSetupReqInd(uep,tb);
+	
 	// Send the RRC Connection Setup Message,
 	// using the exact initialUE_Identity the UE provided, whatever it is.
-#if 0
-	sendRrcConnectionSetup(uep,&msg->initialUE_Identity);
-#endif
+	if (gRANControl.enabled())
+	{
+		gRANControl.sendRRCIndMsg(uep,tb);
+	}
+	else
+	{
+		sendRrcConnectionSetup(uep,&msg->initialUE_Identity);
+	}
 }
 
 void continueRrcConnectionSetup(UEInfo *uep)
@@ -1644,7 +1657,7 @@ void rrcRecvCcchMessage(BitVector &tb,unsigned asc)
 	case ASN::UL_CCCH_MessageType_PR_cellUpdate:
 		LOG(INFO) << "CELL_UPDATE message received";
 		//asn_fprint(stdout,&ASN::asn_DEF_CellUpdate, &msg1->message.choice.cellUpdate);
-		handleCellUpdate(&msg1->message.choice.cellUpdate);
+		handleCellUpdate(tb,&msg1->message.choice.cellUpdate);
 		return;
 	case ASN::UL_CCCH_MessageType_PR_rrcConnectionRequest:
 		LOG(INFO) << "RRC Connection Request received";

@@ -103,7 +103,7 @@ void TCPClient::sendBinaryData(const char *data, std::size_t len) {
 
 std::string TCPClient::receiveData(size_t buffer_size) {
     uint8_t buffer[buffer_size];
-    ssize_t bytes_received = recv(sock_, buffer, buffer_size, 0);
+    ssize_t bytes_received = recv(sock_, buffer, buffer_size, MSG_WAITALL);
     //td::cout << "bytes_received = " << bytes_received  << std::endl;
     if (bytes_received < 0) {
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -114,8 +114,8 @@ std::string TCPClient::receiveData(size_t buffer_size) {
     }    
     std::string str;    
     if (bytes_received > 0)
-    {        
-        str.append((char *)buffer,bytes_received);     
+    {
+        str.append((char *)buffer,bytes_received);
     }
     
     return str;
