@@ -340,9 +340,11 @@ bool RadioInterface::pullBuffer(void)
   float *convert_out = (float *) (outerRecvBuffer->begin() + dnsampler->len());
 
   convert_short_float(convert_out, convert_in, CONVERT_RX_SCALE, outchunk * 2);
+#if 0
   if (detectClipping(convert_out, outchunk * 2, CLIP_THRESH)) {
     LOG(ALERT) << "Overpower detected on receive input";
   }
+#endif
 
   underrun |= localUnderrun;
   readTimestamp += outchunk;
