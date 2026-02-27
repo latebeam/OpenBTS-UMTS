@@ -143,6 +143,7 @@ INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.Uplink.ScramblingCode','543',0,0,'Ba
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.UseTurboCodes','1',0,0,'1=enabled, 0=disabled - Are turbocodes enabled.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.CPICH.TxPower','10',0,0,'FDD Primary CPICH TX Power. Valid values are -10-50.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.PowerOffset.PowerRampStep','2',0,0,'FDD PRACH PowerOffset powerRampStep. Valid values are 1-8');
+INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.GSM.Neighbours','',0,0,'UMTS GSM Neighbour list. Format: ARFCN,NCC,BCC,FrequencyBand(0/1). Delimiter ":". Example: 100,1,2,0:101,1,2,0');
 COMMIT;
 
 

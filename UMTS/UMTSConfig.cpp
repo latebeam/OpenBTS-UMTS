@@ -95,6 +95,13 @@ struct SibInfo_t {
 	//  have been more clever (like subsequent segments in same slot in next cycle.)
 };
 
+struct GSMNeighbour {
+    int arfcn;
+    int ncc;
+    int bcc;
+    int freqBand;
+};
+
 class BeaconConfig {
 
 	ASN::MasterInformationBlock mMIB;
@@ -631,6 +638,41 @@ static long *newlong(long value) {
 	long *result = RN_CALLOC(long);
 	*result = value;
 	return result;
+}
+
+std::vector<GSMNeighbour> parseGSMNeighbours(const std::string &str)
+{
+    std::vector<GSMNeighbour> out;
+
+    std::stringstream ss(str);
+    std::string item;
+
+    while (std::getline(ss, item, ':')) {
+
+        if (item.empty())
+            continue;
+
+        std::stringstream entry(item);
+        std::string field;
+        std::vector<int> values;
+
+        while (std::getline(entry, field, ',')) {
+            try {
+                values.push_back(std::stoi(field));
+            } catch (...) {
+                values.clear();
+                break;
+            }
+        }
+
+        if (values.size() != 4) {
+            continue;
+        }
+
+        out.push_back({values[0], values[1], values[2], values[3]});
+    }
+
+    return out;
 }
 
 // This fills in the mMIB and mSIB* structures.
@@ -1425,13 +1467,81 @@ void BeaconConfig::regenerate()
 
 	// Type 11
 	// 3GPP 25.331 10.2.48.8.14
-	ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_SysInfoType11,&mSIB11);
-	memset(&mSIB11,0,sizeof(mSIB11));
-	mSIB11.sib12indicator = false;
-	mSIB11.fach_MeasurementOccasionInfo = NULL;
-	//mSIB11.fach_MeasurementControlSysInfo = NULL;//RN_CALLOC(ASN::FACH_MeasurementOccasionInfo);
-	mSIB11.measurementControlSysInfo.use_of_HCS.present = MeasurementControlSysInfo__use_of_HCS_PR_hcs_not_used;
-	mSIB11.measurementControlSysInfo.use_of_HCS.choice.hcs_not_used.cellSelectQualityMeasure.present = MeasurementControlSysInfo__use_of_HCS__hcs_not_used__cellSelectQualityMeasure_PR_cpich_Ec_N0;
+    ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_SysInfoType11, &mSIB11);
+    memset(&mSIB11, 0, sizeof(mSIB11));
+    mSIB11.sib12indicator = false;
+    mSIB11.measurementControlSysInfo.use_of_HCS.present =
+        MeasurementControlSysInfo__use_of_HCS_PR_hcs_not_used;
+        
+    auto &hcsNotUsed =
+        mSIB11.measurementControlSysInfo.use_of_HCS.choice.hcs_not_used;
+
+    hcsNotUsed.cellSelectQualityMeasure.present =
+        MeasurementControlSysInfo__use_of_HCS__hcs_not_used__cellSelectQualityMeasure_PR_cpich_Ec_N0;
+
+    // interRATMeasurementSysInfo
+    std::string gsmNeighboursStr = gConfig.getStr("UMTS.GSM.Neighbours");
+    std::vector<GSMNeighbour> gsmNeighbours = parseGSMNeighbours(gsmNeighboursStr);
+    if (!gsmNeighbours.empty())
+    {
+        hcsNotUsed.interRATMeasurementSysInfo =
+        (InterRATMeasurementSysInfo_B_t *)calloc(1, sizeof(InterRATMeasurementSysInfo_B_t));
+
+        InterRATMeasurementSysInfo_B_t *irat =
+            hcsNotUsed.interRATMeasurementSysInfo;
+
+        irat->interRATCellInfoList =
+            (InterRATCellInfoList_B_t *)calloc(1, sizeof(InterRATCellInfoList_B_t));
+
+        InterRATCellInfoList_B_t *interRATCellInfoList = irat->interRATCellInfoList;
+
+        interRATCellInfoList->removedInterRATCellList.present =
+            RemovedInterRATCellList_PR_removeNoInterRATCells;
+
+        NewInterRATCellList_B_t *newInterRATCellList = &interRATCellInfoList->newInterRATCellList;
+
+        for (const auto &neighbour : gsmNeighbours) {
+
+            NewInterRATCell_B_t *cell =
+                (NewInterRATCell_B_t *)calloc(1, sizeof(NewInterRATCell_B_t));
+
+            cell->interRATCellID =
+                (InterRATCellID_t *)calloc(1, sizeof(InterRATCellID_t));
+            *cell->interRATCellID = 0;   // or increment if needed
+
+            cell->technologySpecificInfo.present =
+                NewInterRATCell_B__technologySpecificInfo_PR_gsm;
+
+            auto &gsm = cell->technologySpecificInfo.choice.gsm;
+
+            gsm.cellSelectionReselectionInfo =
+                (CellSelectReselectInfoSIB_11_12 *)
+                    calloc(1, sizeof(CellSelectReselectInfoSIB_11_12));
+
+            gsm.cellSelectionReselectionInfo->maxAllowedUL_TX_Power =
+                (MaxAllowedUL_TX_Power_t *)calloc(1, sizeof(MaxAllowedUL_TX_Power_t));
+            *gsm.cellSelectionReselectionInfo->maxAllowedUL_TX_Power = 32;
+
+            gsm.cellSelectionReselectionInfo->modeSpecificInfo.present =
+                CellSelectReselectInfoSIB_11_12__modeSpecificInfo_PR_gsm;
+
+            gsm.interRATCellIndividualOffset = 0;
+
+            // BSIC
+            gsm.bsic.ncc = neighbour.ncc;
+            gsm.bsic.bcc = neighbour.bcc;
+
+            gsm.frequency_band.buf = (uint8_t *)calloc(1, 1);
+            gsm.frequency_band.size = 1;
+            gsm.frequency_band.buf[0] = neighbour.freqBand;
+
+            // ARFCN
+            gsm.bcch_ARFCN = neighbour.arfcn;
+
+            ASN_SEQUENCE_ADD(&newInterRATCellList->list, cell);
+        }
+    }
+
 	// Type 12
 	// optional, skip it
 
