@@ -41,20 +41,68 @@ unsigned UMTS::channelFreqKHz(UMTSBand band, unsigned ARFCN)
 				return ARFCN*1000/5;
 			}
 		case UMTS900:
-                        assert((ARFCN<=3088) && (ARFCN>=2937));
-                        return (ARFCN+340*5)*1000/5;
+			assert((ARFCN<=3088) && (ARFCN>=2937));
+			return (ARFCN+340*5)*1000/5;
 		case UMTS1700:
-			assert((ARFCN<=1738) && (ARFCN>=1537));
-                        return (ARFCN+1805*5)*1000/5;
+			if (ARFCN == 1887)
+				return 2112500;
+			else if (ARFCN == 1912)
+				return 2117500;
+			else if (ARFCN == 1937)
+				return 2122500;
+			else if (ARFCN == 1962)
+				return 2127500;
+			else if (ARFCN == 1987)
+				return 2132500;
+			else if (ARFCN == 2012)
+				return 2137500;
+			else if (ARFCN == 2037)
+				return 2142500;
+			else if (ARFCN == 2062)
+				return 2147500;
+			else if (ARFCN == 2087)
+				return 2152500;
+			else
+			{
+				assert((ARFCN<=1738) && (ARFCN>=1537));
+				return (ARFCN+1805*5)*1000/5;
+			}
 		case UMTS1800:
-                        assert((ARFCN<=1513) && (ARFCN>=1162));
-                        return (ARFCN+1575*5)*1000/5;
+			assert((ARFCN<=1513) && (ARFCN>=1162));
+			return (ARFCN+1575*5)*1000/5;
                 case UMTS1900:
-                        assert((ARFCN<=9938) && (ARFCN>=9662));
-                        return (ARFCN)*1000/5;
-                case UMTS2100:
-                        assert((ARFCN<=10838) && (ARFCN>=10562));
-                        return (ARFCN)*1000/5;
+			if (ARFCN == 412)
+				return 1932500;
+			else if (ARFCN == 437)
+				return 1937500;
+			else if (ARFCN == 462)
+				return 1942500;
+			else if (ARFCN == 487)
+				return 1947500;
+			else if (ARFCN == 512)
+				return 1952500;
+			else if (ARFCN == 537)
+				return 1957500;
+			else if (ARFCN == 562)
+				return 1962500;
+			else if (ARFCN == 587)
+				return 1967500;
+			else if (ARFCN == 612)
+				return 1972500;
+			else if (ARFCN == 637)
+				return 1977500;
+			else if (ARFCN == 662)
+				return 1982500;
+			else if (ARFCN == 687)
+				return 1987500;
+			else
+			{
+				assert((ARFCN<=9938) && (ARFCN>=9662));
+				return (ARFCN)*1000/5;	
+			}
+		case UMTS2100:
+			assert((ARFCN<=10838) && (ARFCN>=10562));
+			return (ARFCN)*1000/5;
 		default:
 			assert(0);
 	}
