@@ -187,6 +187,8 @@ bool PCIeSDRDevice::open(const std::string &args, bool extref, const int transce
 	StartParams.sync_source = SDR_SYNC_INTERNAL;
 	StartParams.clock_source = SDR_CLOCK_INTERNAL;
 
+	tx_window = TX_WINDOW_PCIE;
+
 	sprintf(trx_gain_filename,"/OpenBTS/db%d/sdr_tx_gain.txt",transceiver_index);
 	
 	tx_gain_from_file = readTxGainFromFile(trx_gain_filename);
@@ -525,6 +527,8 @@ int PCIeSDRDevice::writeSamples(short *buf, int len,
 	rc = msdr_write(device, timestamp_tmp, (const void**)&psamples, samplesToWrite, chan, &md);
 
 	thread_enable_cancel(true);
+
+	hw_time = md.cur_timestamp;
 
 	if (rc != (unsigned) samplesToWrite) {
 		LOG(ALERT) << "Device send timed out";

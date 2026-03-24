@@ -194,7 +194,7 @@ void Transceiver::pushRadioVector(UMTS::Time &now)
 
   // dump stale bursts, if any
   while ((stale = mTransmitPriorityQueue.getStaleBurst(now))) {
-    LOG(NOTICE) << "dumping STALE burst in TRX->USRP interface burst:"
+    LOG(NOTICE) << "dumping STALE burst in TRX interface burst:"
                 << stale->time() << " now:" << now;
     writeClockInterface();
     delete stale;
@@ -391,7 +391,7 @@ void Transceiver::driveReceiveFIFO()
 
 /*
  * Features a carefully controlled latency mechanism, to 
- * assure that transmit packets arrive at the radio/USRP
+ * assure that transmit packets arrive at the radio
  * before they need to be transmitted.
  *
  * Deadline clock indicates the burst that needs to be
@@ -408,9 +408,9 @@ void Transceiver::driveTransmitFIFO()
   radioClock->wait();
 
   while (radioClock->get() + mTransmitLatency > mTransmitDeadlineClock) {
-    // if underrun, then we're not providing bursts to radio/USRP fast
+    // if underrun, then we're not providing bursts to radio fast
     //   enough.  Need to increase latency by one UMTS frame.
-    if (mRadioInterface->getWindowType() == RadioDevice::TX_WINDOW_USRP1) {
+    if (mRadioInterface->getWindowType() == RadioDevice::TX_WINDOW_PCIE) {
       if (mRadioInterface->isUnderrun()) {
         // only do latency update every 10 frames, so we don't over update
         if (radioClock->get() > mLatencyUpdateTime + UMTS::Time(10, 0)) {

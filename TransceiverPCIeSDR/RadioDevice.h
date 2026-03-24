@@ -1,3 +1,24 @@
+/*
+ * Based on TransceiverUHD/RadioDevice.h
+ *
+ * Copyright 2026 Late Beam
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * See the COPYING file in the main directory for details.
+ *
+ */
+
 #ifndef __RADIO_DEVICE_H__
 #define __RADIO_DEVICE_H__
 
@@ -5,18 +26,15 @@
 #include "config.h"
 #endif
 
-/** A class to handle a USRP rev 4, with a two RFX900 daughterboards */
 class RadioDevice {
   public:
   virtual ~RadioDevice() { }
 
   /* Available transport bus types */
-  enum TxWindowType { TX_WINDOW_USRP1, TX_WINDOW_FIXED };
+  enum TxWindowType { TX_WINDOW_PCIE, TX_WINDOW_FIXED };
 
-  /** Start the USRP */
   virtual bool start()=0;
 
-  /** Stop the USRP */
   virtual bool stop()=0;
 
   /** Get the Tx window type */

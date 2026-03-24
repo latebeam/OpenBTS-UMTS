@@ -117,7 +117,6 @@ static std::string init_devaddr()
   return addr;
 }
 
-// tässä tulee index
 int main(int argc, char *argv[])
 {
   PCIeSDRDevice *sdr_device = NULL;
@@ -161,7 +160,7 @@ int main(int argc, char *argv[])
   else
     std::cout << "** Using internal clock reference" << std::endl;
 
-  std::cout << "** Searching for USRP device " << devaddr << std::endl;
+  std::cout << "** Searching for radio device " << devaddr << std::endl;
   sdr_device = new PCIeSDRDevice(DEVICE_RATE);
   found = sdr_device->open(devaddr, extref,transceiver_index);
 

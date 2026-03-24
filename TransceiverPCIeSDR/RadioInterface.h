@@ -136,7 +136,7 @@ public:
   }
 };
 
-/** class to interface the transceiver with the USRP */
+/** class to interface the transceiver with the Radio */
 class RadioInterface {
 private:
   VectorFIFO  mReceiveFIFO;
@@ -175,10 +175,10 @@ private:
   short *convertSendBuffer;
   short *convertRecvBuffer;
 
-  /** format samples to USRP */
+  /** format samples to radio */
   int radioifyVector(signalVector &wVector, float *shortVector, bool zero);
 
-  /** format samples from USRP */
+  /** format samples from radio */
   void unRadioifyVector(float *floatVector, signalVector &wVector);
 
   /** push UMTS bursts into the transmit buffer */
@@ -263,7 +263,7 @@ public:
   }
 
 protected:
-  /** drive synchronization of Tx/Rx of USRP */
+  /** drive synchronization of Tx/Rx of radio */
   void alignRadio();
 
   /** reset the interface */
