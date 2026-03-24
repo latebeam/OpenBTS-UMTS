@@ -34,6 +34,7 @@ namespace ASN {
 #include "SysInfoType3.h"
 #include "SysInfoType4.h"
 #include "SysInfoType5.h"
+#include "SysInfoType5bis.h"
 #include "SysInfoType6.h"
 #include "SysInfoType7.h"
 #include "SysInfoType8.h"
@@ -110,6 +111,7 @@ class BeaconConfig {
 	ASN::SysInfoType3 mSIB3;
 	ASN::SysInfoType3 mSIB4;
 	ASN::SysInfoType5 mSIB5;
+	ASN::SysInfoType5bis_t mSIB5_BIS;
 	ASN::SysInfoType6 mSIB6;
 	ASN::SysInfoType7 mSIB7;
 	ASN::SysInfoType8 mSIB8;
@@ -189,6 +191,11 @@ BeaconConfig::BeaconConfig()
 	memset(mSibSched,0,sizeof(mSibSched));		// overkill - be safe
 }
 
+static bool useSIB5bis()
+{
+    return gConfig.getNum("UMTS.Radio.Band") == 1700;
+}
+
 // TODO: This code should not be in a constructor because it implicitly references BitVector.
 void BeaconConfig::beaconInit()
 {
@@ -209,7 +216,11 @@ void BeaconConfig::beaconInit()
 	addSibPlan("SIB2",4,1,16*2,SIB_TAGS(2));	// SIB 2 at pos 4
 	addSibPlan("SIB3",6,1,16*2,SIB_TAGS(3));	// SIB 3 at pos 6; pos 8 reserved for MIB.
 	// SIB 5 at pos 10, with 2 segments (ie 2 TransportBlocks)
-	addSibPlan("SIB5",10,3,16,SIB_TAGS(5));
+    if (useSIB5bis()) {
+        addSibPlan("SIB5_BIS",10,3,16,SIB_TAGS(5bis));
+    } else {
+        addSibPlan("SIB5",10,3,16,SIB_TAGS(5));
+    }
 	// SIB 7 at pos 14 in 32-frame cycle.
 	addSibPlan("SIB7",20,1,32,SIB_TAGS(7));
 	// SIB 11 shares slot with SIB7 in a 32 frame cycle.
@@ -229,10 +240,6 @@ static int getConfigPrachSF()
 {
 	return gConfig.getNum("UMTS.PRACH.SF");
 }
-
-
-
-
 
 UMTSConfig::UMTSConfig():
 	// (pat) The radiomodem does not get the downlink scrambling code from here,
@@ -788,6 +795,119 @@ static SCCPCH_SystemInformation *generateSCCPCH(unsigned fachChCode, bool addPIC
 	return sCCPCH_SI;
 }
 
+// Template function to configure common SIB5/SIB5_BIS parameters
+template<typename SIB_TYPE>
+static void configureSIB5Parameters(SIB_TYPE *sib)
+{
+    unsigned fachChCode = gConfig.getNum("UMTS.SCCPCH.SpreadingCode");
+    unsigned pichChCode = fachChCode + 2;
+    
+    sib->sib6indicator = 0;
+    sib->pich_PowerOffset = gConfig.getNum("UMTS.PICH.PICH-PowerOffset");
+    
+    // modeSpecificInfo
+    sib->modeSpecificInfo.present = SysInfoType5__modeSpecificInfo_PR_fdd;
+    sib->modeSpecificInfo.choice.fdd.aich_PowerOffset = gConfig.getNum("UMTS.AICH.AICH-PowerOffset");
+    
+    // primaryCCPCH_Info
+    sib->primaryCCPCH_Info = RN_CALLOC(ASN::PrimaryCCPCH_Info);
+    sib->primaryCCPCH_Info->present = PrimaryCCPCH_Info_PR_fdd;
+    sib->primaryCCPCH_Info->choice.fdd.tx_DiversityIndicator = false;
+    
+    PRACH_SystemInformation *prach_SI = RN_CALLOC(PRACH_SystemInformation);
+    prach_SI->prach_RACH_Info.modeSpecificInfo.present = PRACH_RACH_Info__modeSpecificInfo_PR_fdd;
+    
+    uint16_t * PRACHSigs = RN_CALLOC(uint16_t);
+    *PRACHSigs = htons(0x0001 << gConfig.getNum("UMTS.PRACH.Signature"));
+    setAsnBIT_STRING(&prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSignatures,(uint8_t*)PRACHSigs,16);
+    
+    unsigned rachSF = gConfig.getNum("UMTS.PRACH.SF");
+        switch (rachSF) {
+            case 256:
+                asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSF),SF_PRACH_sfpr256);
+			    break;
+            case 128:
+                asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSF),SF_PRACH_sfpr128);
+                break;
+            case 64:
+                asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSF),SF_PRACH_sfpr64);
+                break;
+            case 32:
+                asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSF),SF_PRACH_sfpr32);
+                break;
+            default:
+                break;
+	}
+    
+    prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.preambleScramblingCodeWordNumber = gConfig.getNum("UMTS.PRACH.ScramblingCode");
+    asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.puncturingLimit),PuncturingLimit_pl1);
+    
+    uint16_t * PRACHSubChan = RN_CALLOC(uint16_t);
+    *PRACHSubChan = htons(0x0010 << gConfig.getNum("UMTS.PRACH.Subchannel"));
+    setAsnBIT_STRING(&prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSubChannelNumbers,(uint8_t*)PRACHSubChan,12);
+    
+    prach_SI->transportChannelIdentity = gRrcDcchConfig->getUlTrChInfo(0)->mTransportChannelIdentity;
+    
+    gRrcCcchConfig->getUlTfs()->toAsnTfs((prach_SI->rach_TransportFormatSet = RN_CALLOC(ASN::TransportFormatSet)));
+    gRrcCcchConfig->getUlTfcs()->toAsnTfcs((prach_SI->rach_TFCS = RN_CALLOC(ASN::TFCS)),TrChRACHType);
+    
+    prach_SI->prach_Partitioning = RN_CALLOC(ASN::PRACH_Partitioning);
+    prach_SI->prach_Partitioning->present = PRACH_Partitioning_PR_fdd;
+    
+    AccessServiceClass_FDD_t *asc = RN_CALLOC(ASN::AccessServiceClass_FDD_t);
+    asc->availableSignatureStartIndex = 0;
+    asc->availableSignatureEndIndex = 0;
+    uint8_t *assignedSubChan = RN_CALLOC(uint8_t);
+    *assignedSubChan = 0x0f << 4;
+    setAsnBIT_STRING(&asc->assignedSubChannelNumber,assignedSubChan,4);
+    ASCSetting_FDD_t *ptt = RN_CALLOC(ASN::ASCSetting_FDD_t);
+    ptt->accessServiceClass_FDD = asc;
+    ASN_SEQUENCE_ADD(&prach_SI->prach_Partitioning->choice.fdd.list,ptt);
+    
+    prach_SI->ac_To_ASC_MappingTable = RN_CALLOC(ASN::AC_To_ASC_MappingTable);
+    for (unsigned i = 0; i < 7; i++) {
+        long *ac = newlong(0);
+        ASN_SEQUENCE_ADD(&prach_SI->ac_To_ASC_MappingTable->list,ac);
+    }
+    
+    int cpichTxPower = gConfig.getNum("UMTS.CPICH.TxPower");
+    int prachPowerOffsetPowerRampStep = gConfig.getNum("UMTS.PRACH.PowerOffset.PowerRampStep");
+    
+    prach_SI->modeSpecificInfo.present = PRACH_SystemInformation__modeSpecificInfo_PR_fdd;
+    prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = RN_CALLOC(ASN::PrimaryCPICH_TX_Power_t);
+    *prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = cpichTxPower;
+    prach_SI->modeSpecificInfo.choice.fdd.constantValue = RN_CALLOC(ASN::ConstantValue_t);
+    *prach_SI->modeSpecificInfo.choice.fdd.constantValue = -10;
+    prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset = RN_CALLOC(ASN::PRACH_PowerOffset);
+    prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->powerRampStep = prachPowerOffsetPowerRampStep;
+    prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->preambleRetransMax = 64;
+    prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters = RN_CALLOC(ASN::RACH_TransmissionParameters);
+    prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->mmax = 32;
+    prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->nb01Min = 0;
+    prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->nb01Max = 50;
+    prach_SI->modeSpecificInfo.choice.fdd.aich_Info = RN_CALLOC(ASN::AICH_Info);
+    prach_SI->modeSpecificInfo.choice.fdd.aich_Info->channelisationCode256 = cAICHSpreadingCodeIndex;
+    prach_SI->modeSpecificInfo.choice.fdd.aich_Info->sttd_Indicator = false;
+    
+    if (cAICHRACHOffset == 5) {
+        asn_long2INTEGER(&(prach_SI->modeSpecificInfo.choice.fdd.aich_Info->aich_TransmissionTiming),AICH_TransmissionTiming_e1);
+    }
+    
+    ASN_SEQUENCE_ADD(&sib->prach_SystemInformationList.list,prach_SI);
+    
+    // SCCPCH System Information List
+    unsigned pchChCode = fachChCode + 1;
+    SCCPCH_SystemInformation *sCCPCH_SI = generateSCCPCH(pchChCode, true, pichChCode);
+    unsigned scc_sf = getConfigSccpchSF();
+    gChannelTree.chReserve(scc_sf, pchChCode);
+    gChannelTree.chReserve(256, pichChCode);
+    ASN_SEQUENCE_ADD(&sib->sCCPCH_SystemInformationList.list, sCCPCH_SI);
+    
+    SCCPCH_SystemInformation *sCCPCH_SI2 = generateSCCPCH(fachChCode, false, 0);
+    gChannelTree.chReserve(scc_sf, fachChCode);
+    ASN_SEQUENCE_ADD(&sib->sCCPCH_SystemInformationList.list, sCCPCH_SI2);
+}
+
 // This macro is from ASN/.../constr_TYPE.h
 #undef ASN_STRUCT_FREE_CONTENTS_ONLY
 #define ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF,ptr) { \
@@ -861,10 +981,13 @@ void BeaconConfig::regenerate()
 				// type is CellValueTag, 1..4
 				SIBSb->sibSb_Type.choice.sysInfoType3 = mMIBValueTag%4 + 1;
 				break;
-			case SIBSb_TypeAndTag_PR_sysInfoType5:
-				// type is CellValueTag, 1..4
-				SIBSb->sibSb_Type.choice.sysInfoType5 = mMIBValueTag%4 + 1;
-				break;
+            case SIBSb_TypeAndTag_PR_sysInfoType5:
+                // type is CellValueTag, 1..4
+                SIBSb->sibSb_Type.choice.sysInfoType5 = mMIBValueTag%4 + 1;
+                break;
+            case SIBSb_TypeAndTag_PR_sysInfoType5bis:  // Add this case
+                SIBSb->sibSb_Type.choice.sysInfoType5bis = mMIBValueTag%4 + 1;
+                break;
 			case SIBSb_TypeAndTag_PR_sysInfoType7:
 				// type is NULL
 				break;
@@ -1117,335 +1240,31 @@ void BeaconConfig::regenerate()
 
 	// Type 5
 	// 3GPP 25.331 10.2.48.8.8
-	//ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_SysInfoType5,&mSIB5);
-	memset(&mSIB5,0,sizeof(mSIB5));
-	mSIB5.sib6indicator = 0;
-	mSIB5.pich_PowerOffset = gConfig.getNum("UMTS.PICH.PICH-PowerOffset");
-	// modeSpecificInfo
-	mSIB5.modeSpecificInfo.present = SysInfoType5__modeSpecificInfo_PR_fdd;
-	mSIB5.modeSpecificInfo.choice.fdd.aich_PowerOffset = gConfig.getNum("UMTS.AICH.AICH-PowerOffset");
-
-	// (pat) The only thing primaryCCPH_Info has in it for FDD is a boolean Tx diversity flag.
-	// primaryCCPCH_Info - optional - skip  (pat) Lets try putting it in.
-#if PAT_TEST
-	mSIB5.primaryCCPCH_Info = RN_CALLOC(PrimaryCCPCH_Info);
-	mSIB5.primaryCCPCH_Info->present = ASN::PrimaryCCPCH_Info_PR_fdd;
-	mSIB5.primaryCCPCH_Info->choice.fdd.tx_DiversityIndicator = 0;
-#endif
-	mSIB5.primaryCCPCH_Info = RN_CALLOC(ASN::PrimaryCCPCH_Info);
-	mSIB5.primaryCCPCH_Info->present = PrimaryCCPCH_Info_PR_fdd;
-	mSIB5.primaryCCPCH_Info->choice.fdd.tx_DiversityIndicator = false;
-
-	{ // start of 10.3.6.55 prach_SystemInformationList, with one entry
-	PRACH_SystemInformation *prach_SI = RN_CALLOC(PRACH_SystemInformation);
-	//  10.3.6.52 PRACH-RACH-Info
-	prach_SI->prach_RACH_Info.modeSpecificInfo.present = PRACH_RACH_Info__modeSpecificInfo_PR_fdd;
-	uint16_t * PRACHSigs = RN_CALLOC(uint16_t);
-	//*PRACHSigs = htons(0x08000 >> gConfig.getNum("UMTS.PRACH.Signature"));
-	// (pat) tried: *PRACHSigs = htons(0xffff);
-	*PRACHSigs = htons(0x0001 << gConfig.getNum("UMTS.PRACH.Signature"));
-	setAsnBIT_STRING(&prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSignatures,(uint8_t*)PRACHSigs,16);
-	//   spreading factor
-        unsigned rachSF = gConfig.getNum("UMTS.PRACH.SF");
-        switch (rachSF) {
-                case 256:
-                        asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSF),SF_PRACH_sfpr256);
-			break;
-                case 128:
-                        asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSF),SF_PRACH_sfpr128);
-                        break;
-                case 64:
-                        asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSF),SF_PRACH_sfpr64);
-                        break;
-                case 32:
-                        asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSF),SF_PRACH_sfpr32);
-                        break;
-                default:
-                        break;
-	}
-	//   scrambling code
-	prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.preambleScramblingCodeWordNumber = gConfig.getNum("UMTS.PRACH.ScramblingCode");
-	// (pat) 25.212 4.2.7.1.1 indicates that the SF for uplink is chosen based on the
-	// number of bits needed for the TF after mutilation by puncturing, so it looks
-	// like the PL Puncturing Limit indirectly selects the SF for the TF.  What a mess.
-	// There is a hint in the Change History of the Layer 1 spec that indicates that
-	// the Punturing Limit was moved around in 2000.
-	// The Puncturing Limit from 10.3.6.52: PRACH info specifies PunturingLimit is 
-	// Real(0.4..1.0 by step of 0.4) which gets ASN encoded as an enumeration
-	// called, are you ready?  PuncturingLimit.  I am setting it to a value of PL=1.00
-	// which means no puncturing, whose enumeration name is PunturingLimit_pl1 == 15
-
-	// Tried for testing, did not help samsung:
-	// asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.puncturingLimit),PuncturingLimit_pl0_80);
-	asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.puncturingLimit),PuncturingLimit_pl1);
-
-	//   subchannel number
-	uint16_t * PRACHSubChan = RN_CALLOC(uint16_t);
-	*PRACHSubChan = htons(0x0010 << gConfig.getNum("UMTS.PRACH.Subchannel"));
-	// (pat) tried: *PRACHSubChan = htons(0xffff);
-	setAsnBIT_STRING(&prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSubChannelNumbers,(uint8_t*)PRACHSubChan,12);
-	// transportChannelIdentity
-	// FIXME -- I don't understand the encoding of this one.
-	// (pat) Yes, the spec doesnt really explain what TrCh id is for.
-	// There can be multiple PRACH, each one serving some subset of UEs,
-	// so it would be possible to download a single Transport Format Set and then steer
-	// each PRACH onto a different Transport Format by specifying a different TrCh id.
-	// If they were going to allow voice channels on RACH, then they would need to specify
-	// three transport channels, not just one, so it makes no sense for that.
-
-	// Pat says: Whatever this is, it is not a config option - it is determined by the TFS setup.
-	// prach_SI->transportChannelIdentity = gConfig.getNum("UMTS.PRACH.TransportChannel",2);
-#if PAT_TEST
-	// (pat) It is 1, not 3.
-	prach_SI->transportChannelIdentity = gRrcDcchConfig->getUlTrChInfo(0)->mTransportChannelIdentity;		// Range is 1..32
-	assert(prach_SI->transportChannelIdentity == 1);
-#else
-	prach_SI->transportChannelIdentity = 3;
-#endif
-
-
-	// (pat) The RACH TFS and TFCS are MD, meaning they are only optional after the first one.
-	// Note: the description and picture of the MAC-s/ch/m imply there is no TFCS on RACH, but there is.
-	// The 10.3.5.23 TFS for RACH differs from a normal TFS only in the rlcsize encoding.  Geesh.
-	// Note that the RACH includes an "ASC" code that replaces logical channel.
-	// (pat) First RACH TFS+TFCS is mandatory.
-	// If there are multiple PRACH channels, subsequent ones are optional: all use first TFS.
-	gRrcCcchConfig->getUlTfs()->toAsnTfs((prach_SI->rach_TransportFormatSet = RN_CALLOC(ASN::TransportFormatSet)));
-	gRrcCcchConfig->getUlTfcs()->toAsnTfcs((prach_SI->rach_TFCS = RN_CALLOC(ASN::TFCS)),TrChRACHType);
-
-	// 10.3.6.53 prach_Partitioning - optional (pat) It defaults to all ASC are available, which is what we want.
-	// (pat) If you take out prach_partitioning, the Samsung does not RACH, or if it does, something is wrong.
-        prach_SI->prach_Partitioning = RN_CALLOC(ASN::PRACH_Partitioning);
-	prach_SI->prach_Partitioning->present = PRACH_Partitioning_PR_fdd;
-	// 10.3.6.6 ASC Setting 
-	AccessServiceClass_FDD_t *asc = RN_CALLOC(ASN::AccessServiceClass_FDD_t);
-	// We are only using one signature
-	asc->availableSignatureStartIndex = 0; //gConfig.getNum("UMTS.PRACH.Signature");
-	asc->availableSignatureEndIndex = 0; //gConfig.getNum("UMTS.PRACH.Signature");
-        uint8_t *assignedSubChan = RN_CALLOC(uint8_t);
-		// (pat) This is a very weird bit mask defined in 25.331 8.6.6.29.
-		// The 4 bits are duplicated in the mask to cover the 12 sub-channels.
-        *assignedSubChan = 0x0f << 4;
-        setAsnBIT_STRING(&asc->assignedSubChannelNumber,assignedSubChan,4);
-        ASCSetting_FDD_t *ptt = RN_CALLOC(ASN::ASCSetting_FDD_t);
-	ptt->accessServiceClass_FDD = asc;
-	ASN_SEQUENCE_ADD(&prach_SI->prach_Partitioning->choice.fdd.list,ptt);
-
-	// persistenceScalingFactorList - optional
- 
-	// (pat) According to of 10.3.6.55 ac_to_ASC mapping is not optional,
-	// but it is not very interesting.
-	// Mapping described in 8.5.13, and more in some other document, and if you 
-	// find it put a reference here.  They can be used to prioritize, ie,
-	// emergency services.
-	// I dont think we need any values other than 0.
-	// But TODO: Figure out how the other values work.
-	// Update: The rrc.asn1 specifies that if you supply these, then you
-	// must supply a sequence of 7 values, which specifically
-	// contradicts RRC sec 10.3.6.53, that says that they default after the first one.
-
-	// AC_To_ASC_Mapping is list of AC_To_ASC_Mapping.
-	prach_SI->ac_To_ASC_MappingTable = RN_CALLOC(ASN::AC_To_ASC_MappingTable);
-	for (unsigned i = 0; i < 7; i++) {
-		long *ac = newlong(0); //i;	// Must be in the range 0..7
-		ASN_SEQUENCE_ADD(&prach_SI->ac_To_ASC_MappingTable->list,ac);
-	}
-
-	int cpichTxPower = gConfig.getNum("UMTS.CPICH.TxPower");
-	int prachPowerOffsetPowerRampStep = gConfig.getNum("UMTS.PRACH.PowerOffset.PowerRampStep");
-
-	//  mode specific information - all of its elements are optional but we have to pick a type
-	//  Not convinced this is optional...adding AICH parameters was required to make phone work.
-	prach_SI->modeSpecificInfo.present = PRACH_SystemInformation__modeSpecificInfo_PR_fdd;
-	prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = RN_CALLOC(ASN::PrimaryCPICH_TX_Power_t);
-    *prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = cpichTxPower; //dBm
-	prach_SI->modeSpecificInfo.choice.fdd.constantValue = RN_CALLOC(ASN::ConstantValue_t);
-    *prach_SI->modeSpecificInfo.choice.fdd.constantValue = -10;
-	prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset = RN_CALLOC(ASN::PRACH_PowerOffset);
-	prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->powerRampStep = prachPowerOffsetPowerRampStep;
-	prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->preambleRetransMax = 64;
-	prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters = RN_CALLOC(ASN::RACH_TransmissionParameters);
-	prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->mmax = 32;
-	prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->nb01Min = 0; 
-	prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->nb01Max = 50;
-	prach_SI->modeSpecificInfo.choice.fdd.aich_Info = RN_CALLOC(ASN::AICH_Info);
-	// AICH Info 10.3.6.2
-#if PAT_TEST
-	prach_SI->modeSpecificInfo.choice.fdd.aich_Info->channelisationCode256 = cAICHSpreadingCodeIndex;
-		// (pat) This ch does not need to be reserved here for the uplink channel - chReserve is for downlink
-		// channels only; the uplink channels use a completely different underlying differentiation
-		// mechanism, namely scrambling codes, not spreading codes.
-		// Harvind probably put this to fix a bug, but the bug was that channel 2 was not being
-		// reserved in the FACH setup code below.
-#else
-        gChannelTree.chReserve(256,2);     // (harvind) This channel may not be used for DCH.
-		prach_SI->modeSpecificInfo.choice.fdd.aich_Info->channelisationCode256 = 2;
-#endif
-        prach_SI->modeSpecificInfo.choice.fdd.aich_Info->sttd_Indicator = false;
-	// NOTE: we want AICH timing to be e1 (5 slots) to give us a little more time to respond
-	if (cAICHRACHOffset == 5) {
-		asn_long2INTEGER(&(prach_SI->modeSpecificInfo.choice.fdd.aich_Info->aich_TransmissionTiming),AICH_TransmissionTiming_e1);
-	} else {
-		assert(0);	// Only value 5 is supported.
-	}
-	
-	// insert the PRACH_SystemInformation into the list.
-	ASN_SEQUENCE_ADD(&mSIB5.prach_SystemInformationList.list,prach_SI);
-	//asn_fprint(stdout,&ASN::asn_DEF_PRACH_SystemInformation, prach_SI);
-	} // end of 10.3.6.55 prach_SystemInformationList
-
-	// (pat) This is the SCCPCH [FACH] channel code.  TODO: Why a lower case 's'?
-	// (pat) Clean this up a little.  Harvind is allocating three downlink channels for PICH and two FACH.
-	// (pat) channels 0,sf=256 and 1,sf=256 are reserved so channels ch=0,sf=64 is also reserved.
-	unsigned fachChCode = gConfig.getNum("UMTS.SCCPCH.SpreadingCode");
-	unsigned pichChCode = fachChCode + 2;
-
-	{ // start of sCCPCH_SystemInformationList
-#if 1 //PAT_TEST
-	unsigned pchChCode = fachChCode + 1;
-	// 25.331 10.3.6.72 note says that the first one is PCH if PCH exists.  Only PCH has a PICH.
-	SCCPCH_SystemInformation *sCCPCH_SI = generateSCCPCH(pchChCode,true,pichChCode);
-	unsigned scc_sf = getConfigSccpchSF();	// (pat) Not currently programmable.
-	gChannelTree.chReserve(scc_sf,pchChCode);	// (pat) This channel may not be used for DCH.
-
-	// (pat) This code may be redundant with a reservation to create the FEC, but cant be too careful.
-	// TODO: The 256 should be scc_sf.
-	gChannelTree.chReserve(256,pichChCode);	// (pat) This channel may not be used for DCH.
-
-	// FIXME: Try taking out pch...
-	// Doesnt seem to matter if this is here or not for either Samsung or Blackberry.
-	ASN_SEQUENCE_ADD(&mSIB5.sCCPCH_SystemInformationList.list,sCCPCH_SI);
-
-	SCCPCH_SystemInformation *sCCPCH_SI2 = generateSCCPCH(fachChCode,false,0);
-	// TODO: The 256 should be scc_sf.
-	gChannelTree.chReserve(scc_sf,fachChCode);	// (pat) This channel may not be used for DCH.
-	ASN_SEQUENCE_ADD(&mSIB5.sCCPCH_SystemInformationList.list,sCCPCH_SI2);
-
-#else
-	// (pat) See 10.3.6.72: Secondary CCPCH Info IE.
-	SCCPCH_SystemInformation *sCCPCH_SI = RN_CALLOC(ASN::SCCPCH_SystemInformation);
-	sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.present = SecondaryCCPCH_Info__modeSpecificInfo_PR_fdd;
-	asn_long2INTEGER(&(sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.dummy1),PCPICH_UsageForChannelEst_mayBeUsed);
-	
-	// FIXME -- Figure out what STTD is and be sure we don't use it.
-	// (pat) See 10.3.6.86: STTD is one of the TX Diversity modes.
-	// SCCPCH Secondary Common Control Physical Channel is the one carrying FACH and PCH.
-	sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sttd_Indicator = false;
-	unsigned scc_sf = getConfigSccpchSF();	// (pat) Not currently programmable.
-	switch (scc_sf) {
-		case 256:
-			sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.present = SF256_AndCodeNumber_PR_sf256;
-			break;
-		case 128:
-                        sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.present = SF256_AndCodeNumber_PR_sf128; //256;
-			break;
-		case 64:
-                        sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.present = SF256_AndCodeNumber_PR_sf64; //256;
-			break;
-		case 32:
-                        sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.present = SF256_AndCodeNumber_PR_sf32; //256;
-			break;
-		case 16:
-                        sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.present = SF256_AndCodeNumber_PR_sf16; //256;
-			break;
-		case 8:
-                        sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.present = SF256_AndCodeNumber_PR_sf8; //256;
-			break;
-		case 4:
-                        sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.present = SF256_AndCodeNumber_PR_sf4; //256;
-			break;
-		default:
-			break;
-	}
-	// We are assigning to choice.sf256 but it is the same variable location for all SFs.
-	sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.choice.sf256 = fachChCode+1;
-
-	// (pat) We must reserve this spot in the ChannelTree.
-	// This code is redundant with the one that creates the channel in FACHFEC(),
-	// but cant be too careful.
-	// (pat) If scc_sf is not 256, then the other FACH/PICH channels are going to collide with this in the
-	// tree of spreading codes and need to be changed.
-	// (pat) This is wrong - should be fachChCode+1 as above.
-	gChannelTree.chReserve(scc_sf,fachChCode);	// (pat) This channel may not be used for DCH.
-
-	sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.pilotSymbolExistence = false;
-	// (pat)  No tfci implies "blind" transport format selection.
-	// It can be used if you are not multiplexing channels so you can use the number of bits
-	// to imply the transport format selected.
-
-	sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.tfci_Existence = true;
-	asn_long2INTEGER(&(sCCPCH_SI->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.positionFixedOrFlexible),PositionFixedOrFlexible_fixed);
-	// (pat) First FACH TFS+TFCS is mandatory.
-	// I believe the subsequent ones are optional and will use the same one if not specified.
-	FACH_PCH_Information *fachPchInfo = RN_CALLOC(ASN::FACH_PCH_Information);
-#if PAT_TEST
-	// (pat) It should be 1, not 3.
-	fachPchInfo->transportChannelIdentity = gRrcDcchConfig->getDlTrChInfo(0)->mTransportChannelIdentity;		// Range is 1..32
-	assert(fachPchInfo->transportChannelIdentity == 1);
-#else
-	fachPchInfo->transportChannelIdentity = 1+1;
-#endif
-
-	// We are leaving CTCH indicator false.
-	// PICH_info is optional - needed only if PCH is multiplexed.
-	gRrcCcchConfig->getDlTfs()->toAsnTfs(&fachPchInfo->transportFormatSet,true);
-	gRrcCcchConfig->getDlTfcs()->toAsnTfcs((sCCPCH_SI->tfcs = RN_CALLOC(ASN::TFCS)),TrChFACHType);
-
-	sCCPCH_SI->fach_PCH_InformationList = RN_CALLOC(ASN::FACH_PCH_InformationList);
-	ASN_SEQUENCE_ADD(&sCCPCH_SI->fach_PCH_InformationList->list,fachPchInfo); 
-	// FIXME: Adding second FACH to SIB5, though it doesn't really exist.  Phone assumes first FACH is PCH and won't go into the RACH procedure
-#if 0	// unused code
-	/*FACH_PCH_Information *fachPchInfo2 = RN_CALLOC(ASN::FACH_PCH_Information);
-	memcpy(fachPchInfo2,fachPchInfo,sizeof(ASN::FACH_PCH_Information));
-	fachPchInfo2->transportChannelIdentity = 2;
-        ASN_SEQUENCE_ADD(&sCCPCH_SI->fach_PCH_InformationList->list,fachPchInfo2);*/
-        /*FACH_PCH_Information *fachPchInfo3 = RN_CALLOC(ASN::FACH_PCH_Information);
-        memcpy(fachPchInfo3,fachPchInfo,sizeof(ASN::FACH_PCH_Information));
-        fachPchInfo3->transportChannelIdentity = 3;
-        ASN_SEQUENCE_ADD(&sCCPCH_SI->fach_PCH_InformationList->list,fachPchInfo3);*/
-#endif
-	
-	PICH_Info_t *pichInfo = RN_CALLOC(ASN::PICH_Info);
-	pichInfo->present = PICH_Info_PR_fdd;
-	pichInfo->choice.fdd.channelisationCode256 = pichChCode;
-
-	// (pat) This code may be redundant with a reservation to create the FEC, but cant be too careful.
-	// TODO: The 256 should be scc_sf.
-	gChannelTree.chReserve(256,pichChCode);	// (pat) This channel may not be used for DCH.
-
-	asn_long2INTEGER(&(pichInfo->choice.fdd.pi_CountPerFrame),PI_CountPerFrame_e18);
-	pichInfo->choice.fdd.sttd_Indicator = false;
-	sCCPCH_SI->pich_Info = pichInfo;
-	ASN_SEQUENCE_ADD(&mSIB5.sCCPCH_SystemInformationList.list,sCCPCH_SI);
-
-        SCCPCH_SystemInformation *sCCPCH_SI2 = RN_CALLOC(ASN::SCCPCH_SystemInformation);
-	memcpy(sCCPCH_SI2,sCCPCH_SI,sizeof(ASN::SCCPCH_SystemInformation));
-        sCCPCH_SI2->secondaryCCPCH_Info.modeSpecificInfo.choice.fdd.sf_AndCodeNumber.choice.sf256 = fachChCode;
-	gChannelTree.chReserve(scc_sf,fachChCode);
-	//sCCPCH_SI2->tfcs = RN_CALLOC(ASN::TFCS);
-	//memcpy(sCCPCH_SI2->tfcs,sCCPCH_SI->tfcs,sizeof(ASN::TFCS));
-	sCCPCH_SI2->pich_Info = NULL;
-        FACH_PCH_Information *fachPchInfo2 = RN_CALLOC(ASN::FACH_PCH_Information);
-        gRrcCcchConfig->getDlTfs()->toAsnTfs(&fachPchInfo2->transportFormatSet,true);
-        gRrcCcchConfig->getDlTfcs()->toAsnTfcs((sCCPCH_SI2->tfcs = RN_CALLOC(ASN::TFCS)),TrChFACHType);
-	//memcpy(fachPchInfo2,fachPchInfo,sizeof(ASN::FACH_PCH_Information));
-	// (pat) We already set the transportChannelIdentity above, and it is the same.
-	// These are different channels.  They all use the transport channel id in the TFS.  Same TFS is used for all.
-	fachPchInfo2->transportChannelIdentity = 1;
-        sCCPCH_SI2->fach_PCH_InformationList = RN_CALLOC(ASN::FACH_PCH_InformationList);
-        ASN_SEQUENCE_ADD(&sCCPCH_SI2->fach_PCH_InformationList->list,fachPchInfo2);
-        ASN_SEQUENCE_ADD(&mSIB5.sCCPCH_SystemInformationList.list,sCCPCH_SI2);
-
-#endif
-	} // end of sCCPCH_SystemInformationList
-
-	// (pat) This print has been superceded by asn2String dumping all the SIBs to the log at end of function below.
-	if (gConfig.getNum("UMTS.Debug.SIB")) {
-		printf("Dumping SIB5...\n");
-		asn_fprint(stdout,&ASN::asn_DEF_SysInfoType5, &mSIB5);	// Dump it all.
-	}
+    if (useSIB5bis()) {
+        ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_SysInfoType5bis, &mSIB5_BIS);
+        memset(&mSIB5_BIS, 0, sizeof(mSIB5_BIS));
+        configureSIB5Parameters(&mSIB5_BIS);
         
-	// cbs_DRX_Level1Information - optional - skip
+        // add frequencyBandIndicator
+        mSIB5_BIS.v4b0NonCriticalExtensions = 
+            (typeof(mSIB5_BIS.v4b0NonCriticalExtensions))
+            calloc(1, sizeof(*mSIB5_BIS.v4b0NonCriticalExtensions));
+        
+        mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext = 
+            (typeof(mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext))
+            calloc(1, sizeof(*mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext));
+        
+        mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator = 
+            (typeof(mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator))
+            calloc(1, sizeof(*mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator));
+        
+        
+        asn_long2INTEGER(mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator, 7); // frequencyBandIndicator : VI
+    } else {
+        ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_SysInfoType5, &mSIB5);
+        memset(&mSIB5, 0, sizeof(mSIB5));
+        configureSIB5Parameters(&mSIB5);
+    }
 
 	// Type 6
 	// Optional, so skip it.
@@ -1594,7 +1413,11 @@ Comment this out until we are further along.
 	LOG(INFO) << asn2string(&ASN::asn_DEF_SysInfoType1, &mSIB1);
 	LOG(INFO) << asn2string(&ASN::asn_DEF_SysInfoType2, &mSIB2);
 	LOG(INFO) << asn2string(&ASN::asn_DEF_SysInfoType3, &mSIB3);
-	LOG(INFO) << asn2string(&ASN::asn_DEF_SysInfoType5, &mSIB5);
+    if (useSIB5bis()) {
+        LOG(INFO) << asn2string(&ASN::asn_DEF_SysInfoType5bis, &mSIB5_BIS);
+    } else {
+        LOG(INFO) << asn2string(&ASN::asn_DEF_SysInfoType5, &mSIB5);
+    }
 	LOG(INFO) << asn2string(&ASN::asn_DEF_SysInfoType7, &mSIB7);
 	LOG(INFO) << asn2string(&ASN::asn_DEF_SysInfoType11, &mSIB11);
 	cout << asn2string(&ASN::asn_DEF_SysInfoType11, &mSIB11);
@@ -1605,7 +1428,11 @@ Comment this out until we are further along.
 	encodeSIBPhase1(1, "SIB1", &asn_DEF_SysInfoType1,(void*)&mSIB1);
 	encodeSIBPhase1(2, "SIB2", &asn_DEF_SysInfoType2,(void*)&mSIB2);
 	encodeSIBPhase1(3, "SIB3", &asn_DEF_SysInfoType3,(void*)&mSIB3);
-	encodeSIBPhase1(4, "SIB5", &asn_DEF_SysInfoType5,(void*)&mSIB5);
+    if (useSIB5bis()) {
+        encodeSIBPhase1(4, "SIB5_BIS", &asn_DEF_SysInfoType5bis, (void*)&mSIB5_BIS);
+    } else {
+        encodeSIBPhase1(4, "SIB5", &asn_DEF_SysInfoType5, (void*)&mSIB5);
+    }
 	encodeSIBPhase1(5, "SIB7", &asn_DEF_SysInfoType7,(void*)&mSIB7);
 	encodeSIBPhase1(6, "SIB11",&asn_DEF_SysInfoType11,(void*)&mSIB11);
         //encodeSIBPhase1(7, "SIB12",&asn_DEF_SysInfoType12,(void*)&mSIB12);
