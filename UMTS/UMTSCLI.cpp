@@ -56,7 +56,7 @@ extern int gFecTestMode;
 class MacTester : public MacEngine
 {
 	void writeLowSide(const TransportBlock&tb) {
-		printf("Received uplink TB size %d\n",tb.size());
+		printf("Received uplink TB size %ld\n",tb.size());
 		std::cout <<"tb="<<(ByteVector)tb;
 	}
 
@@ -457,7 +457,7 @@ int rrcTest(int argc, char** argv, ostream& os)
 			printf("failed to encode %s\n",help);
 			return 0;
 		}
-		printf("==== RRCConnectionRequest sizebits=%d\n",pdu.sizeBits());
+		printf("==== RRCConnectionRequest sizebits=%ld\n",pdu.sizeBits());
 
 		// Try decoding immediately:
 		ASN::UL_CCCH_Message *msg1 = (ASN::UL_CCCH_Message*)

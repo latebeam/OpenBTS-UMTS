@@ -1,6 +1,9 @@
 /*
+ * Based on TransceiverUHD/convolve.c
+ *
  * SSE Convolution
  * Copyright (C) 2012, 2013 Thomas Tsou <tom@tsou.cc>
+ * Copyright 2026 Late Beam
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -494,64 +497,103 @@ static void sse_conv_cmplx_8n(float *x, float *h, float *y, int h_len, int len)
 #endif
 
 /* Base multiply and accumulate complex-real */
-static void mac_real(float *x, float *h, float *y)
+static inline void mac_real(float *x, float *h, float *y)
 {
 	y[0] += x[0] * h[0];
 	y[1] += x[1] * h[0];
 }
 
 /* Base multiply and accumulate complex-complex */
-static void mac_cmplx(float *x, float *h, float *y)
+static inline void mac_cmplx(float *x, float *h, float *y)
 {
 	y[0] += x[0] * h[0] - x[1] * h[1];
 	y[1] += x[0] * h[1] + x[1] * h[0];
 }
 
-/* Base vector complex-complex multiply and accumulate */
-static void mac_real_vec_n(float *x, float *h, float *y,
-			   int len, int step, int offset)
-{
-	for (int i = offset; i < len; i += step)
-		mac_real(&x[2 * i], &h[2 * i], y);
-}
-
-/* Base vector complex-complex multiply and accumulate */
-static void mac_cmplx_vec_n(float *x, float *h, float *y,
-			    int len, int step, int offset)
-{
-	for (int i = offset; i < len; i += step)
-		mac_cmplx(&x[2 * i], &h[2 * i], y);
-}
-
-/* Base complex-real convolution */
+/* Base complex-real convolution — optimized scalar path.
+ * The original code used per-tap function calls through mac_real_vec_n/mac_real
+ * with step/offset indirection that prevented auto-vectorization.
+ * This version uses a tight inner loop with direct pointer arithmetic.
+ * For the common case (step=1, offset=0), the inner loop has no branches.
+ */
 static int _base_convolve_real(float *x, int x_len,
 			       float *h, int h_len,
 			       float *y, int y_len,
 			       int start, int len,
 			       int step, int offset)
 {
-	for (int i = 0; i < len; i++) {
-		mac_real_vec_n(&x[2 * (i - (h_len - 1) + start)],
-			       h,
-			       &y[2 * i], h_len,
-			       step, offset);
+	if (step == 1 && offset == 0) {
+		/* Fast path: contiguous taps, no stepping — the resampler case */
+		for (int i = 0; i < len; i++) {
+			float *restrict xp = &x[2 * (i - (h_len - 1) + start)];
+			float *restrict hp = h;
+			float sumR = 0.0f, sumI = 0.0f;
+			for (int k = 0; k < h_len; k++) {
+				float hval = hp[2 * k];
+				sumR += xp[2 * k] * hval;
+				sumI += xp[2 * k + 1] * hval;
+			}
+			y[2 * i] = sumR;
+			y[2 * i + 1] = sumI;
+		}
+	} else {
+		/* General path with step/offset */
+		for (int i = 0; i < len; i++) {
+			float *xp = &x[2 * (i - (h_len - 1) + start)];
+			float sumR = 0.0f, sumI = 0.0f;
+			for (int k = offset; k < h_len; k += step) {
+				float hval = h[2 * k];
+				sumR += xp[2 * k] * hval;
+				sumI += xp[2 * k + 1] * hval;
+			}
+			y[2 * i] = sumR;
+			y[2 * i + 1] = sumI;
+		}
 	}
 
 	return len;
 }
 
-/* Base complex-complex convolution */
+/* Base complex-complex convolution — optimized scalar path. */
 static int _base_convolve_complex(float *x, int x_len,
 				  float *h, int h_len,
 				  float *y, int y_len,
 				  int start, int len,
 				  int step, int offset)
 {
-	for (int i = 0; i < len; i++) {
-		mac_cmplx_vec_n(&x[2 * (i - (h_len - 1) + start)],
-				h,
-				&y[2 * i],
-				h_len, step, offset);
+	if (step == 1 && offset == 0) {
+		/* Fast path: contiguous taps */
+		for (int i = 0; i < len; i++) {
+			float *restrict xp = &x[2 * (i - (h_len - 1) + start)];
+			float *restrict hp = h;
+			float sumR = 0.0f, sumI = 0.0f;
+			for (int k = 0; k < h_len; k++) {
+				float xr = xp[2 * k];
+				float xi = xp[2 * k + 1];
+				float hr = hp[2 * k];
+				float hi = hp[2 * k + 1];
+				sumR += xr * hr - xi * hi;
+				sumI += xr * hi + xi * hr;
+			}
+			y[2 * i] = sumR;
+			y[2 * i + 1] = sumI;
+		}
+	} else {
+		/* General path with step/offset */
+		for (int i = 0; i < len; i++) {
+			float *xp = &x[2 * (i - (h_len - 1) + start)];
+			float sumR = 0.0f, sumI = 0.0f;
+			for (int k = offset; k < h_len; k += step) {
+				float xr = xp[2 * k];
+				float xi = xp[2 * k + 1];
+				float hr = h[2 * k];
+				float hi = h[2 * k + 1];
+				sumR += xr * hr - xi * hi;
+				sumI += xr * hi + xi * hr;
+			}
+			y[2 * i] = sumR;
+			y[2 * i + 1] = sumI;
+		}
 	}
 
 	return len;
@@ -586,6 +628,41 @@ int convolve_real(float *x, int x_len,
 {
 	void (*conv_func)(float *, float *, float *, int) = NULL;
 	void (*conv_func_n)(float *, float *, float *, int, int) = NULL;
+
+	/* Single-sample fast path: skip bounds_check, memset, and dispatch.
+	 * The polyphase resampler calls with len=1 per output sample, so
+	 * this eliminates significant per-call overhead (768-1250x per chunk). */
+	if (len == 1 && step == 1 && offset == 0) {
+#ifdef HAVE_SSE3
+		float *xp_base = &x[2 * (-(h_len - 1) + start)];
+		switch (h_len) {
+		case 4:  sse_conv_real4(xp_base, h, y, 1);  return 1;
+		case 8:  sse_conv_real8(xp_base, h, y, 1);  return 1;
+		case 12: sse_conv_real12(xp_base, h, y, 1); return 1;
+		case 16: sse_conv_real16(xp_base, h, y, 1); return 1;
+		case 20: sse_conv_real20(xp_base, h, y, 1); return 1;
+		default:
+			if (!(h_len % 4)) {
+				sse_conv_real4n(xp_base, h, y, h_len, 1);
+				return 1;
+			}
+		}
+#endif
+		/* Scalar single-sample: inline the 20-tap convolution */
+		{
+			float *restrict xp = &x[2 * (-(h_len - 1) + start)];
+			float *restrict hp = h;
+			float sumR = 0.0f, sumI = 0.0f;
+			for (int k = 0; k < h_len; k++) {
+				float hval = hp[2 * k];
+				sumR += xp[2 * k] * hval;
+				sumI += xp[2 * k + 1] * hval;
+			}
+			y[0] = sumR;
+			y[1] = sumI;
+		}
+		return 1;
+	}
 
 	if (bounds_check(x_len, h_len, y_len, start, len, step) < 0)
 		return -1;

@@ -134,11 +134,18 @@ class UDPSocket : public DatagramSocket {
 
 public:
 
+	/** Tag to construct a UDPSocket without binding.  Caller must call
+	    open() later before use. */
+	struct Deferred {};
+
 	/** Open a USP socket with an OS-assigned port and no default destination. */
 	UDPSocket( unsigned short localPort=0);
 
+	/** Construct without binding.  Call open() later. */
+	UDPSocket(Deferred) : DatagramSocket() {}
+
 	/** Given a full specification, open the socket and set the dest address. */
-	UDPSocket( 	unsigned short localPort, 
+	UDPSocket( 	unsigned short localPort,
 			const char * remoteIP, unsigned short remotePort);
 
 	/** Set the destination port. */

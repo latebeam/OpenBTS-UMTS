@@ -33,9 +33,10 @@ Transceiver::Transceiver(int wBasePort,
 			 int wSamplesPerSymbol,
 			 UMTS::Time wTransmitLatency,
 			 RadioInterface *wRadioInterface)
-	:mDataSocket(wBasePort+2,TRXAddress,wBasePort+102),
-	 mControlSocket(wBasePort+1,TRXAddress,wBasePort+101),
-	 mClockSocket(wBasePort,TRXAddress,wBasePort+100)
+	// Compact port layout — see TRXManager.cpp for details.
+	:mDataSocket(wBasePort+4,TRXAddress,wBasePort+5),
+	 mControlSocket(wBasePort+2,TRXAddress,wBasePort+3),
+	 mClockSocket(wBasePort+0,TRXAddress,wBasePort+1)
 {
   //UMTS::Time startTime(0,0);
   //UMTS::Time startTime(gHyperframe/2 - 4*216*60,0);
@@ -353,8 +354,8 @@ void Transceiver::driveReceiveFIFO()
 {
 
   radioVector *rxBurst = NULL;
-  int RSSI;
-  int TOA;  // in 1/256 of a symbol
+  int RSSI = 0;
+  //int TOA;  // in 1/256 of a symbol
   UMTS::Time burstTime;
 
   mRadioInterface->driveReceiveRadio(1024+mDelaySpread);
@@ -399,7 +400,8 @@ void Transceiver::driveReceiveFIFO()
 
 #if 1
     mDataSocket.write(burstString,burstSz);
-    delete[] burstString;
+    //delete[] burstString;
+    free(burstString);
 #else
     //mR.write(burstString);
 #endif

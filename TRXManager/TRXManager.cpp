@@ -37,8 +37,8 @@ using namespace std;
 int ::ARFCNManager::sendCommandPacket(const char* command, char* response)
 {
 	int msgLen = 0;
-	char cmdNameTest[15];
-	int status;
+	//char cmdNameTest[15];
+	//int status;
 	int timeout = 6000;
 	response[0] = '\0';
 
@@ -213,11 +213,16 @@ bool ::ARFCNManager::radioPowerOn(bool warn)
 void TransceiverManager::TransceiverManagerInit(int numARFCNs,
                 const char* wTRXAddress, int wBasePort)
 {
-        //mHaveClock = false;
-        mClockSocket.open(wBasePort+100);
-        // set up the ARFCN managers
+        // Compact port layout — each OpenBTS-UMTS instance uses up to 10
+        // consecutive ports so multiple instances can coexist cleanly
+        // (next instance starts at wBasePort+10):
+        //   +0: transceiver clock bind
+        //   +1: OpenBTS clock bind (this socket)
+        //   +2..+5: ARFCN 0 (trx ctrl, UMTS ctrl, trx data, UMTS data)
+        //   +6..+9: ARFCN 1
+        mClockSocket.open(wBasePort+1);
         for (int i=0; i<numARFCNs; i++) {
-                int thisBasePort = wBasePort + 1 + 2*i;
+                int thisBasePort = wBasePort + 2 + 4*i;
                 mARFCNs.push_back(new ::ARFCNManager(wTRXAddress,thisBasePort,*this,i));
         }
 }
@@ -281,8 +286,13 @@ void TransceiverManager::clockHandler()
 
 ::ARFCNManager::ARFCNManager(const char* wTRXAddress, int wBasePort, TransceiverManager &wTransceiver, unsigned wCId)
         :mTransceiver(wTransceiver),
-        mDataSocket(wBasePort+100+1,wTRXAddress,wBasePort+1),
-        mControlSocket(wBasePort+100,wTRXAddress,wBasePort),
+        // wBasePort points to this ARFCN's 4-port block:
+        //   +0: transceiver control bind
+        //   +1: OpenBTS control bind (this socket)
+        //   +2: transceiver data bind
+        //   +3: OpenBTS data bind (this socket)
+        mDataSocket(wBasePort+3,wTRXAddress,wBasePort+2),
+        mControlSocket(wBasePort+1,wTRXAddress,wBasePort+0),
         mRadioModem(mDataSocket),
         mCId(wCId)
 {
@@ -470,7 +480,6 @@ void ::ARFCNManager::transmitLoop(void)
         int32_t currFN = gNodeB.clock().FN();
         while (1) {
           bool underrun;
-          unsigned fnbefore = gNodeB.clock().FN();
           usleep(UMTS::gFrameMicroseconds/10);
           //LOG(INFO) << "transmitLoop"<<LOGVAR(currFN)<<LOGVAR(fnbefore)<<LOGVAR2("clock.FN",gNodeB.clock().FN()) <<LOGVAR2("mLastTransmitTime",mRadioModem.mLastTransmitTime);
           // (pat) I moved the test from after to before this loop, which prevents it from running ahead.

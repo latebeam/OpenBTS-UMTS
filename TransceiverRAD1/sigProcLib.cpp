@@ -1044,9 +1044,9 @@ bool analyzeTrafficBurst(signalVector &rxBurst,
   assert(TOA);
   assert(gMidambles[TSC]);
 
-  if (maxTOA < 3*samplesPerSymbol) maxTOA = 3*samplesPerSymbol;
+  if ((int)maxTOA < 3*samplesPerSymbol) maxTOA = 3*samplesPerSymbol;
   unsigned spanTOA = maxTOA;
-  if (spanTOA < 5*samplesPerSymbol) spanTOA = 5*samplesPerSymbol;
+  if ((int)spanTOA < 5*samplesPerSymbol) spanTOA = 5*samplesPerSymbol;
 
   unsigned startIx = (66-spanTOA)*samplesPerSymbol;
   unsigned endIx = (66+16+spanTOA)*samplesPerSymbol;

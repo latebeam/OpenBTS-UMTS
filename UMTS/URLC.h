@@ -387,6 +387,8 @@ class URlcBase
 	// and they are always provided.
 	URlcBase() { assert(0); }
 
+	virtual ~URlcBase() {}
+
 	// Modulo mSNS arithmetic functions.
 	int deltaSN(URlcSN sn1, URlcSN sn2);
 	URlcSN addSN(URlcSN sn1, URlcSN sn2);
@@ -645,6 +647,7 @@ class URlcTrans : public virtual URlcBase
 
 	public:
 	URlcTrans();
+	virtual ~URlcTrans() {}
 
 	virtual unsigned rlcGetBytesAvail() = 0;
 
@@ -759,6 +762,8 @@ class URlcTransAmUm : // Transmit common to AM and UM modes.
 	URlcTransAmUm(URlcConfigAmUm *wConfig) :
 		mConfig(wConfig)
 		{ transDoReset(); }
+
+	virtual ~URlcTransAmUm() {}
 
 	// MAC reads the low side with this.
 	URlcBasePdu *rlcReadLowSide();
@@ -953,8 +958,9 @@ class URlcTransAm :
 		URlcTransAmUm(wConfig),
 		mConfig(wConfig)
 		{
-			mRlcid = format("AMT%d",mrbid);
+			mRlcid = format("AM TX%d", mrbid);
 		}
+	virtual ~URlcTransAm() {}
 	void text(std::ostream &os);
 	void triggerReset() { mResetTriggered = true; }	// for testing
 };
@@ -1008,7 +1014,7 @@ class URlcRecvAm : // UMTS RLC Acknowledged Mode Receiver
 
 	public:
 	URlcRecvAm(URlcConfigAm *wConfig) : URlcRecvAmUm(wConfig), mConfig(wConfig) {
-		mRlcid = format("AMR%d",mrbid);
+		mRlcid = format("AM RX%d", mrbid);
 	}
 
 	void rlcWriteLowSide(const BitVector &pdu);
@@ -1053,7 +1059,7 @@ class URlcAm : public URlcTransAm, public URlcRecvAm	// UMTS RLC Acknowledged Mo
 		URlcRecvAm(&mConfig),
 		mConfig(*rbInfo,*dltfs,dlPduSize)
 	{
-		mAmid=format("AM%d",mrbid);
+		mAmid=format("AM %d", mrbid);
 		transAmInit(); recvAmInit();
 		if (mConfig.mMaxRST == 0) {
 			LOG(WARNING) << "Max_RESET not configured";
@@ -1132,6 +1138,8 @@ struct URlcPair {
 	URlcPair(RBInfo *rb, RrcTfs *dltfs, UEInfo *uep, TrChId tcid);
 	~URlcPair();
 };
+
+void pushRrcUplinkMessage(UEInfo *uep, UMTS::RbId rbid, ByteVector *sdu);
 
 }; // namespace UMTS
 

@@ -21,6 +21,7 @@
 #include "Interthread.h"
 
 #include "RANControlMsg.h"
+#include "UMeasInterface.h"
 
 #define RANCONTROL_LOOP_TEST 0
 
@@ -36,13 +37,15 @@ namespace Control {
 union RANControlMessageUnion {
     sCellSetupIndMsgType *cellSetupMsg;
     sRRCMsgType          *rrcMsg;
+    sRttMeasMsgType      *rttMeasMsg;
 };
 
 
 enum eInternalRANControlMessageType {
     eRANControlMessageNone = 0,
     eRANControlMessageCellSetupInd,
-    eRANControlMessageRRC   
+    eRANControlMessageRRC,
+    eRANRttMeasMessage
 };
 
 // internal wrapper
@@ -59,17 +62,18 @@ class RANControlMessage {
     }
 };
 
-class RANControl
+class RANControl : public MeasInterface
 {
 private:
 
     void handleRRCReqMsg(const sRRCMsgType *rrcMsg);
     void handleReceiveMessages(const sRanControlMsgHeaderType &header, const std::string &msg);
+    void handleRttMeasMsg(const UMTS::RttMeasMsg &rttMeasMsg);
 
     sCellSetupIndMsgType* createCellSetupIndMsg(const std::string &trx_identifier,bool transmitting,uint32_t &msgLen);
-    sRRCMsgType*          createRRCIndMsg(uint32_t URNTI,uint16_t CRNTI, const uint32_t rrcPduNum, const ByteVector &bv,uint32_t &msgLen);
-    
-#ifdef RANCONTROL_LOOP_TEST    
+    sRRCMsgType*          createRRCIndMsg(UEInfo *uep, const uint32_t rrcPduNum, const ByteVector &bv,uint32_t &msgLen);
+
+#ifdef RANCONTROL_LOOP_TEST
     // For testing purposes
     void                  createDLDirectTransferTest(ByteVector &bv);
     sRRCMsgType*          createRRCReqMsgTest(uint32_t URNTI,uint16_t CRNTI, const ByteVector &bv,uint32_t &msgLen);
@@ -80,6 +84,7 @@ private:
     /* data */
     Thread mRANControlReceiveThread;
     Thread mRANControlSendThread;
+    Thread mRANOpMaintThread;
     mutable Mutex mLock;					///< Lock for thread-safe access.
 
     InterthreadQueue <RANControlMessage> mRANControlSendQueue;
@@ -89,10 +94,12 @@ private:
 
     TCPClient    *mTCPClient;
     unsigned int mRANControlPort;	    // Remote Port
-	std::string  mRANControlIP;	        // Remote Address
+    std::string  mRANControlIP;	        // Remote Address
     std::string  mCellId;               // Cell identification for the instance, not 3GPP related
-    unsigned int mId;                   // Id of the instance, not indexing    
-    
+    unsigned int mId;                   // Id of the instance, not indexing
+
+    InterthreadQueue<RttMeasMsg> m_qRttMeasMsgs;
+
 public:
     RANControl(/* args */);
     ~RANControl();
@@ -101,15 +108,23 @@ public:
     void start();
     void receiveLoop();
     void sendLoop();
+    void omLoop();
 
     void cellSetupInd(bool transmitting);
     void sendRRCIndMsg(UEInfo *uep, const BitVector &bitVector);
     void rrcUplinkMessageInd(UEInfo *uep, const ByteVector &byteVector,unsigned rbNum);
+
+    // MeasInterface implementation
+    virtual RttMeasMsg *allocRttMeasMsg() { return new RttMeasMsg; }
+    virtual void freeRttMeasMsg(RttMeasMsg *rttMeasMsg) { delete rttMeasMsg; }
+    virtual void writeRttMeasMsg(RttMeasMsg *rttMeasMsg) { m_qRttMeasMsgs.write(rttMeasMsg); }
+    virtual RttMeasMsg *readRttMeasMsg() { return m_qRttMeasMsgs.readNoBlock(); };
 };
 
 
 void *RANControlReceiveLoopAdapter(Control::RANControl*);
 void *RANControlSendLoopAdapter(Control::RANControl*);
+void *RANControlOMLoopAdapter(Control::RANControl*);
 
 } // namespace Control
 

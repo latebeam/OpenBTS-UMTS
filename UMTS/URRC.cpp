@@ -370,11 +370,55 @@ void RBInfo::defaultConfig0CFRb(unsigned rbn)
 #endif
 };
 
+void RBInfo::defaultConfig3SRB(unsigned rbn)
+{
+	LOG(NOTICE) << "rbn = " << rbn;
+	rb_Identity(rbn);
+	switch (rbn) {
+	case 1:				// SRB1, used to communicate with RRC itself.
+		ul_RLC_Mode(URlcModeUm);
+		dl_RLC_Mode(URlcModeUm);
+		// Transmission RLC Discard Mode is 'NotConfigured'.
+		break;
+	case 2: case 3:		// SRB2 and SRB3.
+		// This is the config from the manual, but I think we could just
+		// use defaultConfigSrbRlcAm();
+		ul_RLC_Mode(URlcModeAm);
+		transmissionRLC_DiscardMode(TransmissionRlcDiscard::NoDiscard);
+		transmissionWindowSize(128);
+		maxDat(30); // 15
+		timerRST(300);
+		max_RST(1);
+		// >>pollingInfo
+		lastTransmissionPDU_Poll(true);	// redundant, this is the default. false
+		lastRetransmissionPDU_Poll(true);	// redundant, this is the default. false
+		timerPollPeriodic(200); // 300
+		//PollWindow() // not implemented?
+		dl_RLC_Mode(URlcModeAm);
+		receivingWindowSize(128);
+		//dl_RLC_PDU_size(16);	//not specified?
+		inSequenceDelivery(true);
+		// >>dl_RLC_StatusInfo
+		//timerStatusProhibit(100);
+		missingPDU_Indicator(true); // false
+		timerStatusPeriodic(300);
+		//rlc_OneSidedReEst(false);	// Not in the old spec?
+		break;
+		default: assert(0);
+	}
+	switch (rbn) {
+		case 1: case 2: case 3:		// SRB1,2,3 multiplexed on TrCh 1.
+			setTransportChannelIdentity(1);
+			break;
+			default: assert(0);
+	}
+}
+
 // 25.331 13.7 Default configuration number 3, for voice.
 // SRBS: RB1 thru RB3 and data: RB5, RB6, RB7.
 void RBInfo::defaultConfig3Rb(unsigned rbn)
 {
-	rb_Identity(rbn);
+	rb_Identity(rbn,CSDomain);
 	switch (rbn) {
 	case 1:				// SRB1, used to communicate with RRC itself.
 		ul_RLC_Mode(URlcModeUm);
@@ -495,6 +539,7 @@ void Rrc::purgeUEs()
 	//int t300 = gConfig.getNum("UMTS.Timers.T300",1000);
 	int tInactivity = 1000*gConfig.getNum("UMTS.Timers.Inactivity.Release");
 	int tDelete = 1000*gConfig.getNum("UMTS.Timers.Inactivity.Delete");
+	static const long t308 = 3000; // T308 "RRC Connection Release Complete" timer in millisecs
 	RN_FOR_ITR(UEList_t,mUEList,itr) {
 		UEInfo *uep = *itr;
 
@@ -528,9 +573,24 @@ void Rrc::purgeUEs()
 		long elapsed = uep->mActivityTime.elapsed();
 		switch (uep->ueGetState()) {
 		case stIdleMode:
+			// Phantom DCH cleanup: UE is in idle state but has an allocated
+			// DCH — RRC Setup was sent but UE never completed.  UE's T300
+			// retransmit is 1-2s, so after 3s if Setup Complete hasn't
+			// arrived, the UE is not going to succeed.  Free the slot
+			// immediately so another UE can try.
+			if (uep->mUeDch != NULL &&
+			    uep->mUeDch->mOpenTime.elapsed() > 3000) {
+				LOG(NOTICE) << uep << ": Cleaning up phantom DCH (idle UE, open "
+				           << uep->mUeDch->mOpenTime.elapsed() << "ms)";
+				macUnHookupDch(uep);
+			}
 			if (elapsed > tDelete) {
-				// Temporarily add an alert for this:
-				LOG(ALERT) << "Deleting " << uep;
+				LOG(NOTICE) << uep << ": Deleting because UE in idle mode for " << elapsed << " msec";
+				// Safety: if UE still has a DCH, unhook it before deletion
+				// so its DCHFEC is properly released from gActiveDCH.
+				if (uep->mUeDch != NULL) {
+					macUnHookupDch(uep);
+				}
 				mUEList.erase(itr);
 				delete uep;
 			}
@@ -538,12 +598,32 @@ void Rrc::purgeUEs()
 		case stCELL_FACH:
 		case stCELL_DCH:
 		case stCELL_PCH:
-			if (elapsed > tInactivity &&
-				last->mTransactionType != ttRrcConnectionRelease) {
+		case stURA_PCH:
+			if ((elapsed > tInactivity) &&
+				(uep->isRttMeasurementStarted() == false) &&
+				((last == NULL) || (last->mTransactionType != ttRrcConnectionRelease))) {
+				LOG(NOTICE) << uep << ": Releasing due to inactivity for " << elapsed << " msec";
 				sendRrcConnectionRelease(uep);
 			}
+			else if ((last != NULL) &&
+					 (last->mTransactionType == ttRrcConnectionRelease) &&
+					 (last->elapsed() > t308)) {
+				// In order to avoid deadlocks with macServiceLoop:
+				// => just push fake RrcConnectionReleaseComplete message for UE ?!
+				// => UE state changes to idle mode then (releases some resources)
+				ByteVector *sdu = new ByteVector(2);
+				RN_MEMLOG(ByteVector, sdu); // TODO: Is this needed?
+				sdu->setByte(0, 0x44); // Message type
+				sdu->setByte(1, last->mTransactionId << 6); // Transaction identifier (2 bits 0...3)
+				LOG(NOTICE) << uep << ": T308 expired: Pushing fake RRCConnectionReleaseComplete message: " << *sdu;
+				pushRrcUplinkMessage(uep, UMTS::SRB1, sdu);
+			}
 			break;
-		default: assert(0);
+		case stUnused:
+			break;
+		default:
+			LOG(ALERT) << uep << ": unexpected UE state " << uep->ueGetState() << " in purgeUEs";
+			break;
 		}
 	}
 }
@@ -682,7 +762,7 @@ DCCHLogicalChannel*UEInfo::allocateLogicalChannel()
 
 void UEInfo::ueRecvRrcConnectionReleaseResponse(unsigned transId, bool success, const char *msgname)
 {
-	UeTransaction *tr = getTransaction(transId,ttRrcConnectionSetup,msgname);
+	UeTransaction *tr = getTransaction(transId,ttRrcConnectionRelease,msgname);
 	// For our purposes, we are going to forget about this phone, success or otherwise.
         /*if (success) {
                 // If we were in DCH state, then unhook DCH.  
@@ -691,6 +771,14 @@ void UEInfo::ueRecvRrcConnectionReleaseResponse(unsigned transId, bool success, 
                         macUnHookupDch(this);
                 }
         }*/
+
+	// If received RRC connection release while waiting for RRCConnectionSetupComplete (DCH)
+	// Set DCH state temporarily in order to trigger DCH/RLC closing actions when changing back to IdleMode below !!
+	UeTransaction *lastTr = getLastTransaction();
+	if (lastTr && lastTr->mTransactionType == UEDefs::ttRrcConnectionSetup)
+		this->ueSetState(stCELL_DCH);
+
+	stopRttMeasurement();
 	this->ueSetState(stIdleMode);
 	if (tr) tr->transClose();	// Done with this one.
 }
@@ -700,7 +788,11 @@ void UEInfo::ueRecvRrcConnectionSetupResponse(unsigned transId, bool success, co
 	UeTransaction *tr = getTransaction(transId,ttRrcConnectionSetup,msgname);
 	// Even if we dont find the correct UeTransaction, the UE is in
 	// CELL_FACH state or we would not have gotten this message, so switch:
+#if 0
 	if (success) this->ueSetState(stCELL_FACH);
+#else
+	if (success) this->ueSetState(stCELL_DCH);
+#endif
 	if (tr) tr->transClose();	// Done with this one.
 }
 
@@ -868,9 +960,9 @@ void UEInfo::msWriteHighSide(ByteVector &dlpdu, uint32_t rbid, const char *descr
 void UEInfo::ueWriteHighSide(RbId rbid, ByteVector &sdu, string descr)
 {
 	ueRegisterActivity();
-	PATLOG(1,format("ueWriteHighSide(%d,sizebytes=%d,%s)",rbid,sdu.size(),descr.c_str()));
-	LOG(INFO) << "From SGSN: " << format("ueWriteHighSide(%d,sizebytes=%d,%s)",rbid,sdu.size(),descr.c_str());
-        LOG(INFO) << "SGSN data: " << sdu;
+	PATLOG(1,format("ueWriteHighSide(%u,sizebytes=%lu,%s)",rbid,sdu.size(),descr.c_str()));
+	LOG(INFO) << this << ": From SGSN: " << format("ueWriteHighSide(%u,sizebytes=%lu,%s)",rbid,sdu.size(),descr.c_str());
+	LOG(INFO) << this << ": SGSN data: " << sdu;
 	URlcTrans *rlc = getRlcDown(rbid);
 	if (!rlc) {
 		LOG(ERR) << "logic error in ueWriteHighSide: null rlc";
@@ -923,6 +1015,7 @@ void UEInfo::msDeactivateRabs(unsigned rabMask)
 // or DCH (state==stCELL_DCH), and it is an error it does not match the state we think the UE is in.
 void UEInfo::ueWriteLowSide(RbId rbid, const BitVector &pdu,UEState state)
 {
+	LOG(INFO) << this << ": RX UL-DCCH: mUEState = " << mUeState << " rbid = " << rbid << " UEState = " << state;
 	ueRegisterActivity();
 	//UeTransaction(uep,UeTransaction::ttRrcConnectionSetup, 0, transactionId,stCELL_FACH);
 	// The first transaction needs to be handled specially.
@@ -932,10 +1025,11 @@ void UEInfo::ueWriteLowSide(RbId rbid, const BitVector &pdu,UEState state)
 		// It is NOT necessarily transaction number 0.
 		// FIXME: This may have missed the uplink ConnectionSetupComplete message, in which case what should we do?
 		UeTransaction *trans = getLastTransaction();
-		if (trans && trans->mTransactionType == UeTransaction::ttRrcConnectionSetup) {
-			ueRecvRrcConnectionSetupResponse(0, true, "RrcConnectionSetup");
+		if (trans && (trans->mTransactionType == UeTransaction::ttRrcConnectionSetup) && (rbid > 1)) {
+			ueRecvRrcConnectionSetupResponse(0, true, "RrcConnectionSetupComplete?");
+			LOG(INFO) << this << ": Received UL-DCCH message for UE in idle mode while waiting response for RrcConnectionSetup";
 		} else {
-			LOG(ERR) << "Received DCCH message for UE in idle mode for trans. type: " << trans->mTransactionType << " "<<this;
+			LOG(ERR) << this << ": Received UL-DCCH message for UE in idle mode for transaction type: " << trans->mTransactionType << " from rbid: " << rbid;
 		}
 	}
 	URlcRecv *rlc = NULL;
@@ -946,7 +1040,7 @@ void UEInfo::ueWriteLowSide(RbId rbid, const BitVector &pdu,UEState state)
 		LOG(ERR) << "invalid"<<LOGVAR(rbid)<<((state == stCELL_FACH)?" on RACH":" on DCH") <<this;
 		return;
 	}
-	LOG(INFO) << "rbid: " << rbid << " rrc: rlcWriteLowSide: " <<this<<" "<<pdu;
+	LOG(INFO) << this << ": rbid: " << rbid << " rrc: rlcWriteLowSide: " << pdu;
 	rlc->rlcWriteLowSide(pdu);
 	// TODO: This rlc needs a connection on the top side.
 }
@@ -1092,6 +1186,32 @@ string UEInfo::ueid() const
     return string(buf); // not efficient, but only for debugging.
 }
 
+void UEInfo::startRttMeasurement(MeasInterface *measInterface)
+{
+	if ((mUeDch != NULL) && (mUeState == stCELL_DCH))
+	{
+		UMTS::PhCh *phCh = mUeDch->getPhCh();
+		if (phCh)
+		{
+			phCh->subscribeRttMeasData(measInterface, mURNTI);
+		}
+	}
+}
+
+void UEInfo::stopRttMeasurement()
+{
+	if ((mUeDch != NULL) && (mUeDch->getPhCh() != NULL) &&
+		mUeDch->getPhCh()->isRttMeasDataSubscribed())
+	{
+		mUeDch->getPhCh()->unsubscribeRttMeasData();
+	}
+}
+
+bool UEInfo::isRttMeasurementStarted() const
+{
+	return ((mUeDch != NULL) && (mUeDch->getPhCh() != NULL)) ?
+		mUeDch->getPhCh()->isRttMeasDataSubscribed() : false;
+}
 
 std::ostream& operator<<(std::ostream& os, const UEInfo*uep)
 {
@@ -1233,6 +1353,17 @@ void RrcMasterChConfig::rrcConfigDchCS(DCHFEC *dch)
 	this->setRB(7,CSDomain)->defaultConfig3Rb(7);
 }
 
+// The DCH must be SF=128 or higher.
+void RrcMasterChConfig::rrcConfigDchCSSRB()
+{
+	this->mTrCh.defaultConfig1TrChSRB();
+	LOG(NOTICE) << "TRCH configured";
+
+	this->setSRB(1)->defaultConfig3SRB(1);
+	this->setSRB(2)->defaultConfig3SRB(2);
+	this->setSRB(3)->defaultConfig3SRB(3);
+}
+
 // This is the entry point to send the big RB setup message for a PS (internet) data connection,
 // called from L3 in the SGSN, or more precisely, the GGSN upon receiving a request
 // for a new PdpContext to be allocated.
@@ -1356,9 +1487,15 @@ static SGSN::RabStatus rrcAllocateRabForPdp(uint32_t urnti,int rbid,ByteVector &
 	// The first time through, set up the SRBs also.
 	bool srbsToo = uep->ueGetState() != stCELL_DCH;
 	if (sendRadioBearerSetup(uep, newConfig, dch, srbsToo)) {
-		// Dont know why it failed, but return some kind of error.
+		// RadioBearerSetup failed — must undo macHookupDch() which already
+		// called dch->open() and added the DCH to gActiveDCH.  Without this,
+		// the leaked DCH stays in the processing list forever, burning ~20%
+		// CPU per slot for despreading/decoding a non-existent UE.
+		LOG(ALERT) << "sendRadioBearerSetup failed, cleaning up DCH " << (void*)dch;
+		macUnHookupDch(uep);
 		return SGSN::RabStatus(SGSN::SmCause::Insufficient_resources);
 	}
+	macFinishHookupDch(uep);
 	LOG(NOTICE)<<"send RabStatus";
 	rabstatus->mStatus = SGSN::RabStatus::RabPending; // Success, of a sort.
 	// Return the bps that the UE supplied, not the one we allocated,
@@ -1439,9 +1576,13 @@ SGSN::RabStatus rrcAllocateRabForCS(UEInfo *uep)
 	// The first time through, set up the SRBs also.
 	bool srbsToo = uep->ueGetState() != stCELL_DCH;
 	if (sendRadioBearerSetup(uep, newConfig, dch, srbsToo)) {
-		// Dont know why it failed, but return some kind of error.
+		// RadioBearerSetup failed — must undo macHookupDch() to avoid
+		// leaking the DCH into gActiveDCH (burns ~20% CPU forever).
+		LOG(ALERT) << "sendRadioBearerSetup (CS) failed, cleaning up DCH " << (void*)dch;
+		macUnHookupDch(uep);
 		return SGSN::RabStatus(SGSN::SmCause::Insufficient_resources);
 	}
+	macFinishHookupDch(uep);
 	rabstatus->mStatus = SGSN::RabStatus::RabPending; // Success, of a sort.
 	rabstatus->mRateDownlink = rabstatus->mRateUplink = 0;	// Not used for CS connections.
 	return *rabstatus;

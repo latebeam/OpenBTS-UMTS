@@ -237,7 +237,7 @@ bool TMSITable::classmark(const char* IMSI, const GSM::L3MobileStationClassmark2
 void TMSITable::putAuthTokens(const char* IMSI, uint64_t upperRAND, uint64_t lowerRAND, uint32_t SRES)
 {
 	char query[300];
-	sprintf(query,"UPDATE TMSI_TABLE SET RANDUPPER=%llu,RANDLOWER=%llu,SRES=%u,ACCESSED=%u WHERE IMSI=\"%s\"",
+	sprintf(query,"UPDATE TMSI_TABLE SET RANDUPPER=%lu,RANDLOWER=%lu,SRES=%u,ACCESSED=%u WHERE IMSI=\"%s\"",
 		upperRAND,lowerRAND,SRES,(unsigned)time(NULL),IMSI);
 	if (!sqlite3_command(mDB,query)) {
 		LOG(ALERT) << "cannot write to TMSI table";

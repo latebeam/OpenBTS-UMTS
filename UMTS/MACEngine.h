@@ -58,6 +58,7 @@ extern unsigned macHeaderSize(TrChType trch, ChannelTypeL3 ltype, bool multiplex
 extern unsigned macHeaderSize(TrChType trch, int rbid, bool multiplexing);
 extern void macHookupRachFach(RACHFEC *rach, FACHFEC *fach, bool useForCcch);
 extern void macHookupDch(DCHFEC_t *dch, UEInfo *uep);
+extern void macFinishHookupDch(UEInfo *uep);
 extern void macUnHookupDch(UEInfo *uep);
 
 
@@ -259,7 +260,13 @@ class MacEngine
 	TrCHFEC * mDownstream;
 	L1CCTrCh * mccDownstream;
 	public:
-	MacEngine() : mDownstream(0), mccDownstream(0) { }
+	// Deferred-removal flag: set by macUnHookupDch (from RRC thread) to
+	// mark this MAC for removal and deletion.  macServiceLoop checks this
+	// flag while already holding mMacListLock and does the actual removal,
+	// avoiding the ABBA deadlock between mMacListLock and mUEListLock.
+	volatile bool mPendingRemove;
+	MacEngine() : mDownstream(0), mccDownstream(0), mPendingRemove(false) { }
+	virtual ~MacEngine() {}
 	void macSetDownstream(TrCHFEC *wDownstream) { mDownstream = wDownstream; }
 	void macSetDownstream(L1CCTrCh *wccDownstream) { mccDownstream = wccDownstream; }
 	unsigned macGetDlNumRadioFrames() const;

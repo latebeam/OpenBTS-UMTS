@@ -15,7 +15,7 @@ include $(top_srcdir)/Makefile.common
 noinst_LTLIBRARIES = libUMTS.la
 
 libUMTS_la_CPPFLAGS = $(AM_CPPFLAGS) -I../TransceiverRAD1
-libUMTS_la_CXXFLAGS = $(AM_CXXFLAGS) # -O3
+libUMTS_la_CXXFLAGS = $(AM_CXXFLAGS) -march=native
 libUMTS_la_SOURCES = \
 	UMTSL1CC.cpp \
 	UMTSL1Const.cpp \

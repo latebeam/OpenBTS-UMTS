@@ -30,13 +30,18 @@
 using namespace Control;
 
 RANControl::RANControl(/* args */) :
-mId(-1), mEnabled(false), mRunning(false),
-mRANControlPort(0), mRANControlIP(""), mCellId("")
-{    
+    mEnabled(false),
+    mRunning(false),
+    mTCPClient(NULL),
+    mRANControlPort(0),
+    mId(-1)
+{
 }
+
 RANControl::~RANControl()
 {
 }
+
 void RANControl::setParams(unsigned int iIndex,
      const std::string sCellId,
      std::string sIp,
@@ -52,43 +57,51 @@ void RANControl::setParams(unsigned int iIndex,
 
     LOG(INFO) << format("mCellId = %s\n",mCellId.c_str());
 }
-bool RANControl::enabled() 
-{   
+
+bool RANControl::enabled()
+{
     return mEnabled;
 }
-void RANControl::start() 
-{   
-    if (mRunning) return;	
+
+void RANControl::start()
+{
+    if (mRunning) return;
     mRANControlSendThread.start((void*(*)(void*))Control::RANControlSendLoopAdapter,this);
     mRANControlReceiveThread.start((void*(*)(void*))Control::RANControlReceiveLoopAdapter,this);
-    
+    mRANOpMaintThread.start((void*(*)(void*))Control::RANControlOMLoopAdapter,this);
 }
 
 void* Control::RANControlReceiveLoopAdapter(RANControl *controller)
-{   
+{
     controller->receiveLoop();
     return NULL;
 }
 
 void* Control::RANControlSendLoopAdapter(RANControl *controller)
-{   
+{
     controller->sendLoop();
+    return NULL;
+}
+
+void* Control::RANControlOMLoopAdapter(RANControl *controller)
+{
+    controller->omLoop();
     return NULL;
 }
 
 // sendLoop receives data from server and sends them to stack (RRC)
 void RANControl::receiveLoop()
-{   	
+{
     while(!mRunning) 
     {
         LOG(DEBUG) << format("wait for connect");
         // 500 ms
         usleep(500*1000);
     }
-    
+
     while (mRunning) {
         size_t headerSize = sizeof(sRanControlMsgHeaderType);
-        std::string strHeader = mTCPClient->receiveData(headerSize);        
+        std::string strHeader = mTCPClient->receiveData(headerSize);
         if(strHeader.size() == headerSize)
         {
             sRanControlMsgHeaderType header;
@@ -98,12 +111,12 @@ void RANControl::receiveLoop()
             LOG(INFO) << "strData Size: " << strData.size();
             handleReceiveMessages(header, strHeader + strData);
         }
-	}
+    }
 }
 
 // sendLoop sends data to server from 3G stack
 void RANControl::sendLoop()
-{    
+{
     // Connect first
     LOG(INFO) << format("RAN CONTROL sendLoop starting ip:%s port:%u\n",mRANControlIP.c_str(),mRANControlPort);
     mTCPClient = new TCPClient(mRANControlIP,mRANControlPort);
@@ -117,19 +130,19 @@ void RANControl::sendLoop()
             break;
         }
         // Connecting once in 2 second TODO: configurable?
-        sleep(2);        
-    } 
-    LOG(INFO) << format("RAN CONTROL sendLoop sending...\n");    
-	while (mRunning) {
-        //  Read from queue and send        
+        sleep(2);
+    }
+    LOG(INFO) << format("RAN CONTROL sendLoop sending...\n");
+    while (mRunning) {
+        //  Read from queue and send
         RANControlMessage *senderMsg = mRANControlSendQueue.read();
         switch(senderMsg->msgType) {
             case eRANControlMessageCellSetupInd:
             {
-                LOG(INFO) << format("RAN CONTROL sendLoop CellSetupIndMsg\n");                
+                LOG(INFO) << format("RAN CONTROL sendLoop CellSetupIndMsg\n");
                 mTCPClient->sendBinaryData((const char *)senderMsg->msg.cellSetupMsg,senderMsg->msgLen);
                 free (senderMsg->msg.cellSetupMsg);
-                delete (senderMsg);                
+                delete (senderMsg);
             }
             break;
             case eRANControlMessageRRC:
@@ -152,13 +165,20 @@ void RANControl::sendLoop()
                     {
                         handleRRCReqMsg(rrcReq);
                         free(rrcReq);
-
                     }
                 }
-#endif                
-                // Free for RRC data               
+#endif
+                // Free for RRC data
                 free (senderMsg->msg.rrcMsg);
                 delete (senderMsg);
+            }
+            break;
+            case eRANRttMeasMessage:
+            {
+                LOG(DEBUG) << format("eRttMeasMsg sending len = %u\n", senderMsg->msgLen);
+                mTCPClient->sendBinaryData((const char *)senderMsg->msg.rttMeasMsg, senderMsg->msgLen);
+                free(senderMsg->msg.rttMeasMsg);
+                delete senderMsg;
             }
             break;
             case eRANControlMessageNone:
@@ -169,31 +189,109 @@ void RANControl::sendLoop()
             default:
             {
                 LOG(WARNING) << format("sendLoop msgType default\n");
-
             }
             break;
-        }        
+        }
         // 1 ms
         usleep(1000);
     }
-    
-} 
+}
+
+// omLoop processes measurement info and some timeout actions.
+void RANControl::omLoop()
+{
+    while(!mRunning)
+    {
+        LOG(DEBUG) << format("wait for connect");
+        usleep(500 * 1000); // 500 millisec
+    }
+
+    while (mRunning) {
+        UMTS::RttMeasMsg *rttMeasMsg = readRttMeasMsg();
+        if (rttMeasMsg != NULL)
+        {
+            // Handle message
+            handleRttMeasMsg(*rttMeasMsg);
+
+            // Release RttMeasMsg object
+            freeRttMeasMsg(rttMeasMsg);
+            rttMeasMsg = NULL;
+        }
+
+        // Throw away UEs that died
+        gRrc.purgeUEs();
+
+        usleep(100 * 1000); // 100 millisec
+    }
+}
+
+void RANControl::handleRttMeasMsg(const UMTS::RttMeasMsg &rttMeasMsg)
+{
+    // Calculate RTT value (see mapping of measured quantity in 3GPP 25.133 Table 9.50)
+    int rttValue;
+    if ((rttMeasMsg.mRTT >= 876.0000) && (rttMeasMsg.mRTT <= 2923.8750))
+    {
+        rttValue = (int)((rttMeasMsg.mRTT - 876.0000) / 0.0625);
+    }
+    else
+    {
+        LOG(ERR) << "Invalid RTT value from UE: " << rttMeasMsg.mHandle;
+        return;
+    }
+
+    // Locate UEInfo
+    UEInfo *uep = findUE(rttMeasMsg.mHandle, 0); // Assuming URNTI always used/available ?!
+    if (uep != NULL) {
+        LOG(NOTICE) << uep << " RTT value " << rttMeasMsg.mRTT;
+
+        // Create RTT Measurement message
+        uint32_t msgLen = sizeof(sRttMeasMsgType);
+        sRttMeasMsgType *msg = (sRttMeasMsgType *)malloc(msgLen);
+        msg->sRanControlMsgHeader.msgLen = htonl(msgLen);
+        msg->sRanControlMsgHeader.magicNr = htonl(0xA0);
+        msg->sRanControlMsgHeader.msgType = htonl(eRanControlMsgType::eRttMeasMsg);
+
+        if ((uep->mURNTI != 0) && (uep->mCRNTI != 0))
+        {
+            msg->ueIdType = UE_ID_TYPE_URNTI | UE_ID_TYPE_CRNTI;
+        } else if ((uep->mURNTI != 0) && (uep->mCRNTI == 0)) {
+            msg->ueIdType = UE_ID_TYPE_URNTI;
+        } else {
+            msg->ueIdType = UE_ID_TYPE_CRNTI;
+        }
+
+        msg->URNTI = htonl(uep->mURNTI);
+        msg->CRNTI = htonl(uep->mCRNTI);
+        msg->rttValue = htonl(rttValue);
+
+        // Encapsulate RTT measurement message to RANControl message
+        RANControlMessage *senderMsg = new RANControlMessage();
+        senderMsg->msgType = eRANRttMeasMessage;
+        senderMsg->msgLen  = msgLen;
+        senderMsg->msg.rttMeasMsg = msg;
+
+        mRANControlSendQueue.write(senderMsg);
+    }
+    else
+    {
+        LOG(ERR) << "Could not find UE with id " << rttMeasMsg.mHandle;
+    }
+}
 
 void RANControl::handleRRCReqMsg(const sRRCMsgType *rrcMsg)
 {
     UEInfo *uep = NULL;
-    unsigned ueid;
 
-   uint16_t CRNTI = ntohs(rrcMsg->CRNTI);
-   uint32_t URNTI = ntohl(rrcMsg->URNTI);
-   uint32_t rrcPduNum = ntohl(rrcMsg->rrcPduNum);
+    uint16_t CRNTI = ntohs(rrcMsg->CRNTI);
+    uint32_t URNTI = ntohl(rrcMsg->URNTI);
+    uint32_t rrcPduNum = ntohl(rrcMsg->rrcPduNum);
 
-    LOG(DEBUG) << "URNTI     = "<< format("%x",URNTI);
-    LOG(DEBUG) << "CRNTI     = "<< format("%x",CRNTI);
-    LOG(DEBUG) << "rrcPduNum = "<< format("%x",rrcPduNum);
+    LOG(DEBUG) << "URNTI     = " << format("%x", URNTI);
+    LOG(DEBUG) << "CRNTI     = " << format("%x", CRNTI);
+    LOG(DEBUG) << "rrcPduNum = " << format("%x", rrcPduNum);
     // 0 = URNTI
     if(URNTI != 0)
-    {         
+    {
         uep = gRrc.findUe(0,URNTI);
     }
     if(uep == NULL)
@@ -202,18 +300,16 @@ void RANControl::handleRRCReqMsg(const sRRCMsgType *rrcMsg)
         {
             uep = gRrc.findUe(1,CRNTI);
         }
-    }    
-	if (uep == NULL) {
-		LOG(INFO) << "Could not find UE with id ";
-		return;
-	}
+    }
+    if (uep == NULL) {
+        LOG(INFO) << "Could not find UE with id";
+        return;
+    }
     uint32_t rrcMsgLen = ntohl(rrcMsg->rrcMsgLen);
-    
-    LOG(DEBUG) << format("rrcMsgLen = %u\n",rrcMsgLen);
     ByteVector bvRRCMsg(rrcMsgLen);
     bvRRCMsg.setAppendP(0,0);
     bvRRCMsg.append((const char*)&(rrcMsg->rrcMsgData),rrcMsgLen);
-    LOG(DEBUG) << "Sending\n";
+    LOG(NOTICE) << uep << ": Sending RRC Msg Data: " << bvRRCMsg << "\n";
 
     // TODO: Add support for SRB2 when needed
     if (rrcPduNum == RRC_PDU_NUM_DL_DCCH) {
@@ -221,13 +317,13 @@ void RANControl::handleRRCReqMsg(const sRRCMsgType *rrcMsg)
     } else if (rrcPduNum == RRC_PDU_NUM_DL_CCCH) {
         uep->ueWriteHighSide(SRB0,bvRRCMsg,"RAN Control SRB0");
     }
-    
-    LOG(DEBUG) << "Sent\n";
+
+    LOG(DEBUG) << uep << ": Sent\n";
 }
 
 void RANControl::handleReceiveMessages(const sRanControlMsgHeaderType &header, const std::string &dataMsg)
 {
-    uint32_t msgLen = ntohl(header.msgLen);
+    //uint32_t msgLen = ntohl(header.msgLen);
     uint32_t msgType = ntohl(header.msgType);
 
     switch (msgType)
@@ -236,28 +332,27 @@ void RANControl::handleReceiveMessages(const sRanControlMsgHeaderType &header, c
         {
             sRRCConnectionReleaseMsgType rrcConnectionReleaseMsg;
             memcpy(&rrcConnectionReleaseMsg,dataMsg.c_str(),dataMsg.size());
-            LOG(INFO) << "ueIdType: " << (int) rrcConnectionReleaseMsg.ueIdType;            
+            LOG(INFO) << "ueIdType: " << (int) rrcConnectionReleaseMsg.ueIdType;
 
             uint32_t URNTI = ntohl(rrcConnectionReleaseMsg.URNTI);
-            uint16_t CRNTI = ntohs(rrcConnectionReleaseMsg.CRNTI);            
+            uint16_t CRNTI = ntohs(rrcConnectionReleaseMsg.CRNTI);
             LOG(INFO) << "CRNTI     : " <<  CRNTI;
             LOG(INFO) << "URNTI     : " <<  URNTI;
 
             UEInfo *uep = NULL;
             uep = findUE(URNTI,CRNTI);
             if (uep == NULL) {
-                LOG(INFO) << "Could not find UE with id ";
+                LOG(INFO) << "Could not find UE with id";
                 return;
             }
-            LOG(INFO) << "UE found";
+            LOG(INFO) << "UE found: " << uep;
             sendRrcConnectionRelease(uep);
-
         }
         break;
         case eRRCConnectionReleaseCcchMsg:
         {
             sRRCConnectionReleaseCcchMsgType rrcConnectionReleaseCcchMsg;
-            memcpy(&rrcConnectionReleaseCcchMsg,dataMsg.c_str(),dataMsg.size());         
+            memcpy(&rrcConnectionReleaseCcchMsg,dataMsg.c_str(),dataMsg.size());
 
             uint32_t URNTI = ntohl(rrcConnectionReleaseCcchMsg.URNTI);
             LOG(INFO) << "URNTI     : " <<  URNTI;
@@ -273,19 +368,18 @@ void RANControl::handleReceiveMessages(const sRanControlMsgHeaderType &header, c
 
             uint32_t URNTI = ntohl(rrcConnectionAcceptMsg.URNTI);
             uint16_t CRNTI = ntohs(rrcConnectionAcceptMsg.CRNTI);
-            
+
             LOG(INFO) << "CRNTI     : " <<  CRNTI;
             LOG(INFO) << "URNTI     : " <<  URNTI;
-            
+
             UEInfo *uep = NULL;
             uep = findUE(URNTI,CRNTI);
             if (uep == NULL) {
-                LOG(INFO) << "Could not find UE with id ";
+                LOG(INFO) << "Could not find UE with id";
                 return;
             }
-            LOG(INFO) << "UE found";
+            LOG(INFO) << "UE found: " << uep;
             continueRrcConnectionSetup(uep);
-
         }
         break;
         case eRRCConnectionRejectMsg:
@@ -295,15 +389,15 @@ void RANControl::handleReceiveMessages(const sRanControlMsgHeaderType &header, c
             LOG(INFO) << "ueIdType: " << (int) rrcConnectionRejectMsg.ueIdType;
             uint32_t URNTI = ntohl(rrcConnectionRejectMsg.URNTI);
             uint16_t CRNTI = ntohs(rrcConnectionRejectMsg.CRNTI);
-            
+
             LOG(INFO) << "CRNTI     : " <<  CRNTI;
             LOG(INFO) << "URNTI     : " <<  URNTI;
-            
+
             UEInfo *uep = NULL;
             // We have to find URNTI
             uep = findUE(URNTI,0);
             if (uep == NULL) {
-                LOG(INFO) << "Could not find UE with id ";
+                LOG(INFO) << "Could not find UE with id";
                 return;
             }
 
@@ -318,7 +412,7 @@ void RANControl::handleReceiveMessages(const sRanControlMsgHeaderType &header, c
             uint32_t rrcPduNum  = ntohl(rrcMsg->rrcPduNum);
             uint32_t rrcMsgBitLen = ntohl(rrcMsg->rrcMsgBitLen);
             uint32_t rrcMsgLen  = ntohl(rrcMsg->rrcMsgLen);
-            
+
             LOG(INFO) << "rrcPduNum    : " << (int) rrcPduNum;
             LOG(INFO) << "rrcMsgBitLen : " << (int) rrcMsgBitLen;
             LOG(INFO) << "rrcMsgLen    : " << (int) rrcMsgLen;
@@ -336,52 +430,71 @@ void RANControl::handleReceiveMessages(const sRanControlMsgHeaderType &header, c
             gNodeB.regenerateBeacon();
         }
         break;
+        case eRttMeasRequestMsg:
+        {
+            sRttMeasRequestType rttMeasReqMsg;
+            memcpy(&rttMeasReqMsg, dataMsg.c_str(), dataMsg.size());
+            uint32_t URNTI = ntohl(rttMeasReqMsg.URNTI);
+            uint16_t CRNTI = ntohs(rttMeasReqMsg.CRNTI);
+            LOG(INFO) << "CRNTI     : " <<  CRNTI;
+            LOG(INFO) << "URNTI     : " <<  URNTI;
+
+            UEInfo *uep = NULL;
+            uep = findUE(URNTI, CRNTI);
+            if (uep == NULL) {
+                LOG(INFO) << "Could not find UE with id";
+                return;
+            }
+            LOG(INFO) << "UE found: " << uep;
+
+            LOG(NOTICE) << uep << ": Starting RTT measurement";
+            uep->startRttMeasurement(this);
+        }
         default:
         {
              LOG(INFO) << "Not supported type = " << (int) msgType;
         }
         break;
     }
-
 }
 
 sCellSetupIndMsgType* RANControl::createCellSetupIndMsg(const std::string &trx_identifier, bool transmitting, uint32_t &msgLen)
-{    
-    size_t trx_identifier_size =  (trx_identifier.size() > 6) ? 6 : trx_identifier.size();
-    LOG(INFO) << format("RAN CONTROL createCellSetupIndMsg trx_identifier_size = %d\n",trx_identifier_size);
-    msgLen = sizeof(sCellSetupIndMsgType) + trx_identifier_size;
+{
+    std::vector<uint8_t> cellIdBytes = hexStringToBytes(trx_identifier);
+    std::size_t cellIdLen = (cellIdBytes.size() > 6) ? 6 : cellIdBytes.size();
+
+    LOG(INFO) << format("RAN CONTROL createCellSetupIndMsg trx_identifier_size = %lu, cellIdLen %lu\n", trx_identifier.size(), cellIdLen);
+    msgLen = sizeof(sCellSetupIndMsgType) + cellIdLen;
     sCellSetupIndMsgType* msg = (sCellSetupIndMsgType*) malloc(msgLen);
 
     // Header
     msg->sRanControlMsgHeader.msgLen = htonl(msgLen);
     msg->sRanControlMsgHeader.magicNr = htonl(0xA0);
-    msg->sRanControlMsgHeader.msgType = htonl(eRanControlMsgType::eCellSetupIndMsg);    
+    msg->sRanControlMsgHeader.msgType = htonl(eRanControlMsgType::eCellSetupIndMsg);
     //Identifier
-    msg->cellIdLen = trx_identifier_size;
+    msg->cellIdLen = cellIdLen;
     LOG(DEBUG) << "msg->cellIdLen = " << (int)msg->cellIdLen;
-    
-    std::vector<uint8_t> cellIdBytes = hexStringToBytes(trx_identifier);
-    for (size_t i = 0;i < cellIdBytes.size();i++)
+
+    for (std::size_t i = 0; i < cellIdLen; i++)
     {
         msg->cellId[i] = cellIdBytes[i];
     }
- 
+
     LOG(DEBUG) << format("RAN CONTROL createCellSetupIndMsg Message size = %d\n",msgLen);
 
     return msg;
 }
 
-
-sRRCMsgType* RANControl::createRRCIndMsg( uint32_t URNTI,uint16_t CRNTI, const uint32_t rrcPduNum, const ByteVector &bv,uint32_t &msgLen)
-{    
-    LOG(DEBUG) << "URNTI = " << format("%x",URNTI) << "\n";
-    LOG(DEBUG) << "CRNTI = " << format("%x",CRNTI) << "\n";
-    LOG(DEBUG) << "bv size = " << bv.size();
+sRRCMsgType* RANControl::createRRCIndMsg(UEInfo *uep, const uint32_t rrcPduNum, const ByteVector &bv,uint32_t &msgLen)
+{
+    LOG(DEBUG) << "URNTI = " << format("%x", uep->mURNTI) << "\n";
+    LOG(DEBUG) << "CRNTI = " << format("%x", uep->mCRNTI) << "\n";
+    LOG(NOTICE) << uep << ": RRC Ind Msg Data = " << bv;
 
     // Whole message len and allocation
     msgLen = sizeof(sRRCMsgType) + bv.size();
     sRRCMsgType* msg = (sRRCMsgType*) malloc(msgLen);
-     // Header
+    // Header
     msg->sRanControlMsgHeader.msgLen =  htonl(msgLen);
     msg->sRanControlMsgHeader.magicNr = htonl(0xA0);
     msg->sRanControlMsgHeader.msgType = htonl(eRanControlMsgType::eRRCMsg);
@@ -389,29 +502,20 @@ sRRCMsgType* RANControl::createRRCIndMsg( uint32_t URNTI,uint16_t CRNTI, const u
     msg->rrcMsgBitLen = htonl(bv.sizeBits());
     msg->rrcMsgLen = htonl(bv.size());
 
-    if ((URNTI != 0) && (CRNTI != 0))
+    if ((uep->mURNTI != 0) && (uep->mCRNTI != 0))
     {
         msg->ueIdType = UE_ID_TYPE_URNTI | UE_ID_TYPE_CRNTI;
-    } else if ((URNTI != 0) && (CRNTI == 0)) {
+    } else if ((uep->mURNTI != 0) && (uep->mCRNTI == 0)) {
         msg->ueIdType = UE_ID_TYPE_URNTI;
     } else {
         msg->ueIdType = UE_ID_TYPE_CRNTI;
     }
-    msg->URNTI = htonl(URNTI);
-    msg->CRNTI = htons(CRNTI);
+    msg->URNTI = htonl(uep->mURNTI);
+    msg->CRNTI = htons(uep->mCRNTI);
     msg->rrcPduNum = htonl(rrcPduNum);
     memcpy(&(msg->rrcMsgData[0]),bv.begin(),bv.size());
-    std::string tmpRrcMessage;
-    for (int i = 0;i < bv.size();i++)
-    {
-        tmpRrcMessage.append(format("%02x",msg->rrcMsgData[i]));
-    }
-    LOG(INFO) << "rrcMsgData: " << tmpRrcMessage << "\n";
-    LOG(DEBUG) << format("createRRCIndMsg Message size = %d\n",msgLen);
     return msg;
 }
-
-
 
 void RANControl::cellSetupInd(bool transmitting)
 {
@@ -426,14 +530,14 @@ void RANControl::cellSetupInd(bool transmitting)
     mRANControlSendQueue.write(senderMsg);
 }
 
- void RANControl::sendRRCIndMsg(UEInfo *uep, const BitVector &bitVector)
- {
-    LOG(INFO) << "RRC Ind Msg bitVector = " << bitVector.str();
+void RANControl::sendRRCIndMsg(UEInfo *uep, const BitVector &bitVector)
+{
+    LOG(INFO) << uep << ": RRC Ind Msg bitVector = " << bitVector.str();
     uint32_t msgLen = 0;
     ByteVector byteVector((bitVector.size()/8) + 1);
     byteVector.setAppendP(0,0);
     byteVector.append(bitVector);
-    sRRCMsgType* msg = createRRCIndMsg(uep->mURNTI,uep->mCRNTI,RRC_PDU_NUM_UL_CCCH,byteVector,msgLen);
+    sRRCMsgType* msg = createRRCIndMsg(uep,RRC_PDU_NUM_UL_CCCH,byteVector,msgLen);
     RANControlMessage *senderMsg = new RANControlMessage();
     // Fill internal message
     senderMsg->rbNum    = 0; // SRB0
@@ -441,14 +545,14 @@ void RANControl::cellSetupInd(bool transmitting)
     senderMsg->msgLen  = msgLen;
     senderMsg->msg.rrcMsg = msg;
 
-    mRANControlSendQueue.write(senderMsg);   
+    mRANControlSendQueue.write(senderMsg);
+}
 
- }
 void RANControl::rrcUplinkMessageInd(UEInfo *uep, const ByteVector &byteVector, unsigned rbNum)
-{   
-    LOG(DEBUG) << format("rbNum = %d\n",rbNum); 
+{
+    LOG(DEBUG) << format("rbNum = %d\n",rbNum);
     uint32_t msgLen = 0;
-    sRRCMsgType* msg = createRRCIndMsg(uep->mURNTI,uep->mCRNTI,RRC_PDU_NUM_UL_DCCH,byteVector,msgLen);
+    sRRCMsgType* msg = createRRCIndMsg(uep,RRC_PDU_NUM_UL_DCCH,byteVector,msgLen);
     RANControlMessage *senderMsg = new RANControlMessage();
     // Fill internal message
     senderMsg->rbNum    = rbNum;
@@ -456,10 +560,11 @@ void RANControl::rrcUplinkMessageInd(UEInfo *uep, const ByteVector &byteVector, 
     senderMsg->msgLen  = msgLen;
     senderMsg->msg.rrcMsg = msg;
 
-    mRANControlSendQueue.write(senderMsg);    
+    mRANControlSendQueue.write(senderMsg);
 }
 
-uint32_t RANControl::stringToUint32(const std::string& str) {
+uint32_t RANControl::stringToUint32(const std::string& str)
+{
     if (str.size() < 4) {
         throw std::runtime_error("String too short to convert to uint32_t");
     }
@@ -498,7 +603,7 @@ UEInfo * RANControl::findUE(const uint32_t URNTI, const uint16_t CRNTI)
     UEInfo *uep = NULL;
     if( URNTI != 0)
     { 
-        //LOG(INFO) << "Could not find UE with id "<< ueid;
+        //LOG(INFO) << "Could not find UE with id" << ueid;
         uep = gRrc.findUe(0,URNTI);
     }
     if(uep == NULL)
@@ -509,14 +614,14 @@ UEInfo * RANControl::findUE(const uint32_t URNTI, const uint16_t CRNTI)
         }
     }    
     if (uep == NULL) {
-        LOG(INFO) << "Could not find UE with id ";
+        LOG(INFO) << "Could not find UE with id";
         return NULL;
     }
     return uep;
 }
 
 
-#if RANCONTROL_LOOP_TEST  
+#if RANCONTROL_LOOP_TEST
 void RANControl::createDLDirectTransferTest(ByteVector &bv)
 {
     // 14 40 04 0a 30 04
@@ -530,10 +635,10 @@ void RANControl::createDLDirectTransferTest(ByteVector &bv)
     bv.appendByte(0x30);
     bv.appendByte(0x04);
     LOG(INFO) << format("3 bv size = %u\n",bv.size());
-    
 }
+
 sRRCMsgType* RANControl::createRRCReqMsgTest( uint32_t URNTI,uint16_t CRNTI, const ByteVector &bv,uint32_t &msgLen)
-{    
+{
     msgLen = sizeof(sRRCMsgType) + bv.size();
     sRRCMsgType* msg = (sRRCMsgType*) malloc(msgLen);
     // Header
@@ -543,14 +648,13 @@ sRRCMsgType* RANControl::createRRCReqMsgTest( uint32_t URNTI,uint16_t CRNTI, con
     // Data
     msg->rrcMsgBitLen = htonl(bv.sizeBits());
     msg->rrcMsgLen = htonl(bv.size());
-    msg->URNTI = htonl(URNTI); 
-    msg->CRNTI = htonl(CRNTI);    
+    msg->URNTI = htonl(URNTI);
+    msg->CRNTI = htonl(CRNTI);
     memcpy(&(msg->rrcMsgData[0]),bv.begin(),bv.size());
     LOG(INFO) << "rrcMsgData: " << format("%x",msg->rrcMsgData[0]) << "\n";
-   
+
     LOG(INFO) << format("Message size = %d\n",msgLen);
 
     return msg;
 }
 #endif
-

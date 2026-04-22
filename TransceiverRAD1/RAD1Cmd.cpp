@@ -171,6 +171,7 @@ main (int argc, char **argv)
 
     case 'v':
       verbose = true;
+      (void)verbose; // unused
       break;
       
     case 'w':
@@ -179,6 +180,7 @@ main (int argc, char **argv)
       
     case 'x':
       fx2_ok_p = true;
+      (void)fx2_ok_p; // unused
       break;
       
     default:
@@ -204,7 +206,7 @@ main (int argc, char **argv)
   	// (pat) 1-10-2013: The load_firmware and load_stand_bits options below do not work;
 	// the next RAD1Cmd will report "found unconfigured RAD1; needs firmware."
 	// Instead use the normal startup, which works:
-    CHKARGS (0);
+	CHKARGS (0);
 	printf("Loading firmware, please wait...\n"); fflush(stdout);
 	RAD1Device *usrp = new RAD1Device(1);
 	usrp->make();

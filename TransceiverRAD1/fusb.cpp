@@ -104,7 +104,7 @@ alloc_lut (fusb_ephandle *self, int buffer_length, int endpoint,
 
 fusb_devhandle::fusb_devhandle (libusb_device_handle *udh,
                                                 libusb_context *ctx)
-  : d_udh(udh), d_ctx (ctx), d_teardown (false)
+  : d_ctx (ctx), d_teardown (false), d_udh(udh)
 {
   // that's it
 }
@@ -212,7 +212,7 @@ fusb_devhandle::_reap (bool ok_to_block_p)
   struct timeval tv;
 
   // Save pending size
-  int pnd_size = d_pending_rqsts.size();
+  std::size_t pnd_size = d_pending_rqsts.size();
   
   if (ok_to_block_p) {
     tv.tv_sec = 2;
@@ -243,10 +243,10 @@ fusb_devhandle::_reap (bool ok_to_block_p)
 fusb_ephandle::fusb_ephandle(fusb_devhandle *dh,
 					      int endpoint, bool input_p,
 					      int block_size, int nblocks)
-  : d_endpoint(endpoint), d_input_p(input_p), d_block_size(block_size), d_nblocks(nblocks), d_started(false),
-    d_devhandle (dh),
+  : d_devhandle (dh),
     d_write_work_in_progress (0), d_write_buffer (0),
-    d_read_work_in_progress (0), d_read_buffer (0), d_read_buffer_end (0)
+    d_read_work_in_progress (0), d_read_buffer (0), d_read_buffer_end (0),
+    d_endpoint(endpoint), d_input_p(input_p), d_block_size(block_size), d_nblocks(nblocks), d_started(false)
 {
 
   if (d_block_size < 0 || d_block_size > MAX_BLOCK_SIZE)

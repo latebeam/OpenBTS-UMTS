@@ -67,6 +67,7 @@ bool resolveAddress(struct sockaddr_in *address, const char *host, unsigned shor
 
 
 DatagramSocket::DatagramSocket()
+	:mSocketFD(-1)  // -1 means unopened; close(-1) is a safe no-op
 {
 	bzero(mDestination,sizeof(mDestination));
 }

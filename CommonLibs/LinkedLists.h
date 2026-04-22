@@ -95,6 +95,7 @@ class SingleLinkListNode
 	SingleLinkListNode *next() {return mNext;}
 	void setNext(SingleLinkListNode *item) {mNext=item;}
 	SingleLinkListNode() : mNext(0) {}
+	virtual ~SingleLinkListNode() {}
 	virtual unsigned size() { return 0; }
 };
 

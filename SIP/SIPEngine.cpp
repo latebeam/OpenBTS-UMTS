@@ -155,6 +155,9 @@ void SIPEngine::saveResponse(osip_message_t *response)
 
 void SIPEngine::saveBYE(const osip_message_t *BYE, bool mine)
 {
+	// Unused parameter
+	(void)mine;
+
 	// Instead of cloning, why not just keep the old one?
 	// Because that doesn't work in all calling contexts.
 	// This simplifies the call-handling logic.

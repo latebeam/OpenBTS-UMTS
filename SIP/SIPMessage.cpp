@@ -204,7 +204,7 @@ osip_message_t * SIP::sip_message( const char * dialed_number, const char * sip_
 	}
 
 	// Content-Length
-	sprintf(temp_buf,"%u",strlen(message));
+	sprintf(temp_buf,"%lu",strlen(message));
 	osip_message_set_content_length(request, strdup(temp_buf));
 
 	// Payload.
@@ -531,6 +531,9 @@ osip_message_t * SIP::sip_bye(const char * req_uri, const char * dialed_number, 
 
 	// FIXME -- We really need some NULL-value error checking in here.
 
+	// Unused parameter
+	(void)proxy_ip;
+
 	char local_port[10];
 	sprintf(local_port,"%i",wlocal_port);
 
@@ -848,6 +851,9 @@ osip_message_t * SIP::sip_ringing( osip_message_t * invite, const char * sip_use
 
 osip_message_t * SIP::sip_okay_SMS( osip_message_t * inv, const char * sip_username, const char * local_ip, short wlocal_port)
 {
+	// Unused parameters
+	(void)sip_username;
+	(void)local_ip;
 
 	// Check for consistency.
 	if(inv==NULL){ return NULL;}
@@ -905,6 +911,9 @@ osip_message_t * SIP::sip_okay_SMS( osip_message_t * inv, const char * sip_usern
 
 
 osip_message_t * SIP::sip_info(unsigned info, const char *dialed_number, short rtp_port, const char * sip_username, short wlocal_port, const char * local_ip, const char * proxy_ip, const char * from_tag, const char * via_branch, const osip_call_id_t *call_id_header, int cseq) {
+
+	// Unused parameter
+	(void)rtp_port;
 
 	char local_port[10];
 	sprintf(local_port, "%i", wlocal_port);

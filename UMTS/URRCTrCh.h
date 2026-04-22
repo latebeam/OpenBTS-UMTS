@@ -112,7 +112,7 @@ class RrcTfs : public virtual RrcDefs  // 10.3.5.23 Transport Format Set
 	// You must call setDedicatedCh or setCommonCh
 	enum ASN::TransportFormatSet_PR mPresent;
 	public:
-	RrcTfs(TrChInfo *wtrch) : mTrChPtr(wtrch) {}
+	RrcTfs(TrChInfo *wtrch) : mTrChPtr(wtrch), mMaxTfSize(0), mMaxTbSize(0) {}
 	RrcTfs* setDedicatedCh() { mPresent = ASN::TransportFormatSet_PR_dedicatedTransChTFS; return this; }
 	RrcTfs* setCommonCh() { mPresent = ASN::TransportFormatSet_PR_commonTransChTFS; return this; }
 
@@ -741,6 +741,7 @@ struct TrChConfig : public virtual RrcDefs
 	bool configDchPS(DCHFEC *dch, TTICodes tticode, unsigned pb, bool useTurbo, unsigned ulTBSize, unsigned dlTBSize);
 
 	// From 25.331 13.7: Parameter values for default radio configurations.
+	void defaultConfig1TrChSRB();
 	void defaultConfig3TrCh();	// Default config number 3, used for voice.
 	//void defaultConfig1TrCh();	// Default config number 1 for low-rate signalling.
 };

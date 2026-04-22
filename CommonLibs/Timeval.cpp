@@ -62,10 +62,9 @@ long Timeval::delta(const Timeval& other) const
 {
 	// 2^31 milliseconds is just over 4 years.
 	long deltaS = other.sec() - sec();
-	long deltaUs = other.usec() - usec();
+	long deltaUs = (long)other.usec() - (long)usec();
 	return 1000*deltaS + deltaUs/1000;
 }
-	
 
 
 

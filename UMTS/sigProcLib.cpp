@@ -347,50 +347,90 @@ signalVector* convolve(const signalVector *a,
   switch (b->getSymmetry()) {
   case NONE:
     {
-      while (t < stopIndex) {
-	signalVector::const_iterator aP = aStart+t;
-	signalVector::const_iterator bP = bStart;
-	if (a->isRealOnly() && b->isRealOnly()) {
-	  float sum = 0.0;
-	  while (bP < bEnd) {
-	    if (aP < aStart) break;
-	    if (aP < aEnd) sum += (aP->real())*(bP->real());
-	    aP--;
-	    bP++;
-	  }
-	  *cPtr++ = sum;
-	}
-	else if (a->isRealOnly()) {
-	  complex sum = 0.0;
-	  while (bP < bEnd) {
-	    if (aP < aStart) break;
-	    if (aP < aEnd) sum += (*bP)*(aP->real());
-	    aP--;
-	    bP++;
-	  }
-	  *cPtr++ = sum;
-	}
-	else if (b->isRealOnly()) {
-	  complex sum = 0.0;
-	  while (bP < bEnd) {
-	    if (aP < aStart) break;
-	    if (aP < aEnd) sum += (*aP)*(bP->real());
-	    aP--;
-	    bP++;
-	  }
-	  *cPtr++ = sum;
-	}
-	else {
-	  complex sum = 0.0;
-	  while (bP < bEnd) {
-	    if (aP < aStart) break;
-	    if (aP < aEnd) sum += (*aP)*(*bP);
-	    aP--;
-	    bP++;
-	  }
-	  *cPtr++ = sum;
-	}
-	t++;
+      // When all inner loop accesses are guaranteed in-bounds, use clean
+      // loops without per-tap branches.  This allows the compiler to
+      // auto-vectorize with -march=native (SSE/AVX).  The bounds-checked
+      // fallback handles edge cases.
+      bool aRealOnly = a->isRealOnly();
+      bool bRealOnly = b->isRealOnly();
+      const complex *aData = a->begin();
+      const complex *bData = b->begin();
+      bool fastPath = (t >= Lb - 1) && (stopIndex - 1 < La);
+
+      if (fastPath && !aRealOnly && !bRealOnly) {
+        // Complex × complex — hot path for correlate() / estimateChannel
+        while (t < stopIndex) {
+          const complex *aP = aData + t;
+          const complex *bP = bData;
+          float sumR = 0.0f, sumI = 0.0f;
+          for (int k = 0; k < Lb; k++) {
+            float ar = aP[-k].real(), ai = aP[-k].imag();
+            float br = bP[k].real(), bi = bP[k].imag();
+            sumR += ar*br - ai*bi;
+            sumI += ar*bi + ai*br;
+          }
+          *cPtr++ = complex(sumR, sumI);
+          t++;
+        }
+      }
+      else if (fastPath && bRealOnly) {
+        // Complex × real — hot path for delayVector (sinc filter)
+        while (t < stopIndex) {
+          const complex *aP = aData + t;
+          const complex *bP = bData;
+          float sumR = 0.0f, sumI = 0.0f;
+          for (int k = 0; k < Lb; k++) {
+            float br = bP[k].real();
+            sumR += aP[-k].real() * br;
+            sumI += aP[-k].imag() * br;
+          }
+          *cPtr++ = complex(sumR, sumI);
+          t++;
+        }
+      }
+      else {
+        // General fallback with bounds checks
+        while (t < stopIndex) {
+          signalVector::const_iterator aP = aStart+t;
+          signalVector::const_iterator bP = bStart;
+          if (aRealOnly && bRealOnly) {
+            float sum = 0.0;
+            while (bP < bEnd) {
+              if (aP < aStart) break;
+              if (aP < aEnd) sum += (aP->real())*(bP->real());
+              aP--; bP++;
+            }
+            *cPtr++ = sum;
+          }
+          else if (aRealOnly) {
+            complex sum = 0.0;
+            while (bP < bEnd) {
+              if (aP < aStart) break;
+              if (aP < aEnd) sum += (*bP)*(aP->real());
+              aP--; bP++;
+            }
+            *cPtr++ = sum;
+          }
+          else if (bRealOnly) {
+            complex sum = 0.0;
+            while (bP < bEnd) {
+              if (aP < aStart) break;
+              if (aP < aEnd) sum += (*aP)*(bP->real());
+              aP--; bP++;
+            }
+            *cPtr++ = sum;
+          }
+          else {
+            complex sum = 0.0;
+            while (bP < bEnd) {
+              if (aP < aStart) break;
+              if (aP < aEnd) sum += (*aP)*(*bP);
+              aP--; bP++;
+            }
+            *cPtr++ = sum;
+          }
+          t++;
+        }
       }
     }
     break;

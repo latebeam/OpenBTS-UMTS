@@ -98,7 +98,7 @@ void startTransceiver(int transceiverIndex)
 	// Start the transceiver binary, if the path is defined.
 	// If the path is not defined, the transceiver must be started by some other process.
 	char TRXnumARFCN[4];
-	sprintf(TRXnumARFCN,"%1d",(int)gConfig.getNum("UMTS.Radio.ARFCNs"),transceiverIndex);
+	sprintf(TRXnumARFCN,"%1d",(int)gConfig.getNum("UMTS.Radio.ARFCNs"));
 	char TRXIndex[4];
 	sprintf(TRXIndex,"%3d",transceiverIndex);
 	LOG(NOTICE) << "starting transceiver " << transceiverPath << " " << TRXnumARFCN;
@@ -117,20 +117,20 @@ int ParseRANControlParams(int argc, char* argv[]) {
     // Store arguments in a vector for convenience
     std::vector<std::string> args(argv + 1, argv + argc);
 
-    unsigned int iIndex;
+    unsigned int iIndex = 0;
 	std::string sCellId;
     std::string sRemoteIp;
-	unsigned int iRemotePort;
+	unsigned int iRemotePort = 0;
 
     for (size_t i = 0; i < args.size(); ++i) {
-		if (args[i] == "--index" && i + 1 < args.size()) {            
+		if (args[i] == "--index" && i + 1 < args.size()) {
 			unsigned long temp = std::stoul(args[++i]);
 			if (temp > 255) {
 				std::cerr << "Value out of range \n";
 				return -1;
-			}			
-			iIndex = temp;			
-			} 
+			}
+			iIndex = temp;
+			}
         else if (args[i] == "--cellid" && i + 1 < args.size()) {
             sCellId = args[++i];
         } else if (args[i] == "--ip" && i + 1 < args.size()) {
@@ -145,8 +145,8 @@ int ParseRANControlParams(int argc, char* argv[]) {
     std::cout << "sIp           : " << sRemoteIp << "\n";
 	std::cout << "iRemotePort   : " << iRemotePort << "\n";
 
-	gRANControl.setParams(iIndex,sCellId,sRemoteIp,iRemotePort);	
-	
+	gRANControl.setParams(iIndex,sCellId,sRemoteIp,iRemotePort);
+
     return iIndex;
 }
 
@@ -228,7 +228,7 @@ int main(int argc, char *argv[])
 	COUT("Starting the transceiver..." << endl);	// (pat) 11-9-2012 Taking this out causes OpenBTS-UMTS to malfunction!  Intermittently.
 	//LOG(INFO) << "Starting the transceiver...";
 	startTransceiver(transceiverIndex);	// (pat) This is now a no-op because transceiver is built-in.
-	sleep(5);
+	sleep(1);
 	// Start the SIP interface.
 	LOG(INFO) << "Starting the SIP interface...";
 	gSIPInterface.start();
@@ -263,6 +263,7 @@ int main(int argc, char *argv[])
 	C0radio->setRxGain(gConfig.getNum("UMTS.Radio.RxGain"));
 
 	// Turn on and power up.
+#if 0 // Unused
 	// get the band and set the RF filter muxes 
 	unsigned gsm_band;
 	unsigned band = gConfig.getNum("UMTS.Radio.Band");
@@ -282,6 +283,7 @@ int main(int argc, char *argv[])
 	default:
 	  gsm_band = 10;
 	}
+#endif
 
 	gRANControl.cellSetupInd(true);
 
@@ -332,7 +334,9 @@ int main(int argc, char *argv[])
 
 	gParser.startCommandLine();
 	//gNodeManager.setAppLogicHandler(&nmHandler);
-	gNodeManager.start(45070);
+	if (!gRANControl.enabled()) {
+		gNodeManager.start(45070);
+	}
 
 	while (1) {
 		char cmdbuf[1000];

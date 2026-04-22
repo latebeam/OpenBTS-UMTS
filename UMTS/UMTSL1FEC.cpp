@@ -1139,24 +1139,23 @@ void DCHFEC::open()
 	ScopedLock lock(gActiveDCH.mLock);
 	// The DCHFEC was already allocated from the ChannelTree by the caller.
 	assert(phChAllocated());
+
 #if USE_OLD_DCH
 	mEncoder->open();
 	mDecoder->open();
 #else
 	controlOpen();
 #endif
+	mLastActivityFN = -1;  // Grace period — will be set to radio FN on first valid UL
+	mOpenTime.now();       // Record open timestamp for orphan cleanup debounce
 	gActiveDCH.push_back((DCHFEC*)this);
-	cout << "Opening DCH" << endl;
 }
 
 // TODO: Do we want a time delay here somewhere before reusing the channel?
 void DCHFEC::close()
 {
-	printf("waiting to remove...\n");
-	while (gActiveDCH.inTxUse || gActiveDCH.inRxUse) usleep(1000);
 	ScopedLock lock(gActiveDCH.mLock);
 	gActiveDCH.remove((DCHFEC*)this);
-	printf("removed\n");
 #if USE_OLD_DCH
 	mEncoder->close();
 	mDecoder->close();
@@ -1166,6 +1165,7 @@ void DCHFEC::close()
 #endif
 	mPhCh->phChClose();		// Allows reallocation in the ChannelTree.
 }
+
 
 
 }; // namespace

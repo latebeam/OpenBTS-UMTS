@@ -104,7 +104,7 @@ const std::string timestr()
 	struct tm tm;
 	gettimeofday(&tv,NULL);
 	localtime_r(&tv.tv_sec,&tm);
-	return format(" %02d:%02d:%02d.%6d",tm.tm_hour,tm.tm_min,tm.tm_sec,tv.tv_usec);
+	return format(" %02d:%02d:%02d.%06ld",tm.tm_hour,tm.tm_min,tm.tm_sec,tv.tv_usec);
 }
 
 // High resolution sleep for the specified time.
@@ -190,7 +190,7 @@ std::ostream& operator<<(std::ostream& os, const Statistic<double> &stat) { stat
 std::string replaceAll(const std::string input, const std::string search, const std::string replace)
 {
 	std::string output = input;
- 	int index = 0;
+ 	std::size_t index = 0;
 
 	while (true) {
 		index = output.find(search, index);

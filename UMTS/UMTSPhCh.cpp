@@ -15,14 +15,19 @@
 #include "UMTSPhCh.h"
 #include "UMTSL1FEC.h"
 #include "AsnHelper.h"
+#include "UMTSRadioModem.h"
+#include "UMTSConfig.h"
 
 #include "asn_system.h"
 namespace ASN {
 //#include "UL-DPCH-Info.h"
 #include "UL-ChannelRequirement.h"
+#include "UL-ChannelRequirement-r4.h"
 //#include "DL-DPCH-InfoCommon.h"
 #include "DL-CommonInformation.h"
+#include "DL-CommonInformation-r4.h"
 #include "DL-InformationPerRL-List.h"
+#include "DL-InformationPerRL-List-r4.h"
 };
 
 namespace UMTS {
@@ -290,10 +295,11 @@ PhCh::PhCh(PhChType chType,
 	unsigned wUlSF,		// uplink spreading factors
 	unsigned wSrCode,	// uplink scrambling code
 	ARFCNManager *wRadio):
-	mPhChType(chType), mDlSF(wDlSF), mDlSFLog2((int)log2(wDlSF)),mUlSF(wUlSF), mSpCode(wSpCode), mSrCode(wSrCode),mRadio(wRadio),
+	mPhChType(chType), mDlSF(wDlSF), mDlSFLog2(0),mUlSF(wUlSF), mSpCode(wSpCode), mSrCode(wSrCode),mRadio(wRadio),
 	mUlPuncturingLimit(gConfig.getNum("UMTS.Uplink.Puncturing.Limit")),
-	mAllocated(0), mDlSlot(0), mUlDPCCH(0)
+	mAllocated(0), mDlSlot(0), mUlDPCCH(0), mMeasInterface(NULL), mRttMeasHandle(0)
 {
+	{ unsigned sf = wDlSF; while (sf > 1) { mDlSFLog2++; sf >>= 1; } }
 	switch (chType) {
 	case DPDCHType:
 		assert(mSpCode<mDlSF);
@@ -387,10 +393,14 @@ void PhCh::toAsnUL_DPCH_Info(ASN::UL_DPCH_Info *iep)
 	// struct UL_DPCH_PowerControlInfo *ul_DPCH_PowerControlInfo   /* OPTIONAL */;
 	iep->ul_DPCH_PowerControlInfo = RN_CALLOC(ASN::UL_DPCH_PowerControlInfo);
 	iep->ul_DPCH_PowerControlInfo->present = ASN::UL_DPCH_PowerControlInfo_PR_fdd;
-	iep->ul_DPCH_PowerControlInfo->choice.fdd.dpcch_PowerOffset = -3; //-6;/*-82 to -3*/ 
-        iep->ul_DPCH_PowerControlInfo->choice.fdd.pc_Preamble = 0; /*long, 0-7*/
-        iep->ul_DPCH_PowerControlInfo->choice.fdd.sRB_delay = 0; /*long, 0-7*/
-        iep->ul_DPCH_PowerControlInfo->choice.fdd.powerControlAlgorithm.present = ASN::PowerControlAlgorithm_PR_algorithm2;
+#if 0
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.dpcch_PowerOffset = -3; //-6;/*-82 to -3*/
+#else
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.dpcch_PowerOffset = -10; //-6;/*-82 to -3*/
+#endif
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.pc_Preamble = 0; /*long, 0-7*/
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.sRB_delay = 0; /*long, 0-7*/
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.powerControlAlgorithm.present = ASN::PowerControlAlgorithm_PR_algorithm2;
 
 	// v struct UL_DPCH_Info__modeSpecificInfo { } modeSpecificInfo;
 	// . UL_DPCH_Info__modeSpecificInfo_PR present;
@@ -428,6 +438,57 @@ void PhCh::toAsnUL_DPCH_Info(ASN::UL_DPCH_Info *iep)
 	// ^ struct UL_DPCH_Info__modeSpecificInfo { } modeSpecificInfo;
 }
 
+// 25.331 10.3.6.88 Uplink DPDCH Info
+// This is only used for DCH. Send the physical parameters.
+void PhCh::toAsnUL_DPCH_Info_r4(ASN::UL_DPCH_Info_r4 *iep)
+{
+	// Sect. 8.6.6.11 of 25.331 says power control much be included when moving from CELL_FACH to CELL_DCH.
+	// Define in 10.3.6.91
+	// struct UL_DPCH_PowerControlInfo *ul_DPCH_PowerControlInfo   /* OPTIONAL */;
+	iep->ul_DPCH_PowerControlInfo = RN_CALLOC(ASN::UL_DPCH_PowerControlInfo_r4);
+	iep->ul_DPCH_PowerControlInfo->present = ASN::UL_DPCH_PowerControlInfo_r4_PR_fdd;
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.dpcch_PowerOffset = -3; //-6;/*-82 to -3*/
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.pc_Preamble = 0; /*long, 0-7*/
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.sRB_delay = 0; /*long, 0-7*/
+	iep->ul_DPCH_PowerControlInfo->choice.fdd.powerControlAlgorithm.present = ASN::PowerControlAlgorithm_PR_algorithm2;
+
+	// v struct UL_DPCH_Info__modeSpecificInfo { } modeSpecificInfo;
+	// . UL_DPCH_Info__modeSpecificInfo_PR present;
+	iep->modeSpecificInfo.present = ASN::UL_DPCH_Info_r4__modeSpecificInfo_PR_fdd;
+	// Gotta love this...
+	struct ASN::UL_DPCH_Info_r4::
+		UL_DPCH_Info_r4__modeSpecificInfo::
+		UL_DPCH_Info_r4__modeSpecificInfo_u::
+		UL_DPCH_Info_r4__modeSpecificInfo__fdd *fdd = &iep->modeSpecificInfo.choice.fdd;
+	// vv union UL_DPCH_Info__modeSpecificInfo_u { } choice;
+	// vvv struct UL_DPCH_Info__modeSpecificInfo__fdd {...} fdd;
+	// ... ScramblingCodeType_t     scramblingCodeType;
+	// TODO: Which scambling code type should it be: short or long?
+	//asn_long2INTEGER(&fdd->scramblingCodeType,ASN::ScramblingCodeType_longSC);
+	fdd->scramblingCodeType = toAsnEnumerated(ASN::ScramblingCodeType_longSC);
+	// ... UL_ScramblingCode_t  scramblingCode;
+	fdd->scramblingCode = this->mSrCode;
+	// ... NumberOfDPDCH_t *numberOfDPDCH  /* DEFAULT 1 */;
+	// ... SpreadingFactor_t    spreadingFactor;
+	LOG(INFO) << "UL SF=" << this->mUlSF;
+	fdd->spreadingFactor = sSpreadingFactor.toAsn(this->mUlSF);
+	// ... BOOLEAN_t    tfci_Existence;
+	// We always use tfci.
+	fdd->tfci_Existence = 1;	// true.
+	// ... NumberOfFBI_Bits_t  *numberOfFBI_Bits   /* OPTIONAL */;
+	// ... PuncturingLimit_t    puncturingLimit;
+	// The uplink puncturing limit is 0.4 to 1 by 0.04,
+	// which we express as percent in the range 40..100
+	// I am hard-coding the ASN enumeration here.
+	int puncturing0to15 = ((this->mUlPuncturingLimit+2) - 40)/4;
+	int puncturingEnumCode = RN_BOUND(puncturing0to15,0,15);
+	fdd->puncturingLimit = toAsnEnumerated(puncturingEnumCode);
+
+	// ^^^ struct UL_DPCH_Info__modeSpecificInfo__fdd {...} fdd;
+	// ^^ union UL_DPCH_Info__modeSpecificInfo_u { } choice;
+	// ^ struct UL_DPCH_Info__modeSpecificInfo { } modeSpecificInfo;
+}
+
 // This IE is not in 25.331, and has nothing useful in it except the pointer
 // to UL_DPCH_Info.  I suspect it is just historical from a previous spec.
 ASN::UL_ChannelRequirement *PhCh::toAsnUL_ChannelRequirement()
@@ -437,6 +498,16 @@ ASN::UL_ChannelRequirement *PhCh::toAsnUL_ChannelRequirement()
 	ASN::UL_ChannelRequirement *result = RN_CALLOC(ASN::UL_ChannelRequirement);
 	result->present = ASN::UL_ChannelRequirement_PR_ul_DPCH_Info;
 	this->toAsnUL_DPCH_Info(&result->choice.ul_DPCH_Info);
+	return result;
+}
+
+ASN::UL_ChannelRequirement_r4 *PhCh::toAsnUL_ChannelRequirement_r4()
+{
+	if (this->mPhChType != DPDCHType) {return NULL;}	// This IE applies only to DPCH.
+
+	ASN::UL_ChannelRequirement_r4 *result = RN_CALLOC(ASN::UL_ChannelRequirement_r4);
+	result->present = ASN::UL_ChannelRequirement_r4_PR_ul_DPCH_Info;
+	this->toAsnUL_DPCH_Info_r4(&result->choice.ul_DPCH_Info);
 	return result;
 }
 
@@ -450,7 +521,11 @@ ASN::DL_DPCH_InfoCommon * PhCh::toAsnDL_DPCH_InfoCommon()
 	// You can never put in the 'NOTHING' option - the asn_CHOICE handler disallows.
 	// This IE has something to do with handover.
 	// I am just putting in the value with the least additional info required.
+#if 0
 	result->cfnHandling.present = ASN::DL_DPCH_InfoCommon__cfnHandling_PR_maintain;
+#else
+	result->cfnHandling.present = ASN::DL_DPCH_InfoCommon__cfnHandling_PR_initialise;
+#endif
 
 	// vv union DL_DPCH_InfoCommon__cfnHandling_u { } choice;
 	// .. NULL_t   maintain;
@@ -533,6 +608,102 @@ ASN::DL_DPCH_InfoCommon * PhCh::toAsnDL_DPCH_InfoCommon()
 	return result;
 }
 
+// 25.331 10.3.6.18 Downlink DPCH Info Common for all Radio Links
+ASN::DL_DPCH_InfoCommon_r4 * PhCh::toAsnDL_DPCH_InfoCommon_r4()
+{
+	ASN::DL_DPCH_InfoCommon_r4 *result = RN_CALLOC(ASN::DL_DPCH_InfoCommon_r4);
+
+	// v struct DL_DPCH_InfoCommon__cfnHandling { } cfnHandling;
+	// . DL_DPCH_InfoCommon__cfnHandling_PR present;
+	// You can never put in the 'NOTHING' option - the asn_CHOICE handler disallows.
+	// This IE has something to do with handover.
+	// I am just putting in the value with the least additional info required.
+#if 0
+	result->cfnHandling.present = ASN::DL_DPCH_InfoCommon__cfnHandling_PR_maintain;
+#else
+	result->cfnHandling.present = ASN::DL_DPCH_InfoCommon_r4__cfnHandling_PR_maintain;
+#endif
+
+	// vv union DL_DPCH_InfoCommon__cfnHandling_u { } choice;
+	// .. NULL_t   maintain;
+	// vvv struct DL_DPCH_InfoCommon__cfnHandling__initialise {} initialise;
+	// ... Cfntargetsfnframeoffset_t   *dummy  /* OPTIONAL */;
+	// ^^^ struct DL_DPCH_InfoCommon__cfnHandling__initialise {} initialise;
+	// ^^ union DL_DPCH_InfoCommon__cfnHandling_u { } choice;
+	// ^ struct DL_DPCH_InfoCommon__cfnHandling { } cfnHandling;
+
+	// vv struct DL_DPCH_InfoCommon__modeSpecificInfo { } modeSpecificInfo;
+	// .. DL_DPCH_InfoCommon__modeSpecificInfo_PR present;
+	result->modeSpecificInfo.present = ASN::DL_DPCH_InfoCommon_r4__modeSpecificInfo_PR_fdd;
+	// vv union DL_DPCH_InfoCommon__modeSpecificInfo_u { } fdd;
+	// vvv struct DL_DPCH_InfoCommon__modeSpecificInfo__fdd { } choice;
+	ASN::DL_DPCH_InfoCommon_r4::
+		DL_DPCH_InfoCommon_r4__modeSpecificInfo::
+		DL_DPCH_InfoCommon_r4__modeSpecificInfo_u::
+		DL_DPCH_InfoCommon_r4__modeSpecificInfo__fdd *fdd = &result->modeSpecificInfo.choice.fdd;
+
+	// TODO: What should all this power stuff be?
+	// ... struct DL_DPCH_PowerControlInfo *dl_DPCH_PowerControlInfo   /* OPTIONAL */;
+
+	// ... PowerOffsetPilot_pdpdch_t    powerOffsetPilot_pdpdch;
+	// And I quote: "Power offset equals PPilot - PDPDCH, range 0..6 dB, in steps of 0.25 dB"
+	fdd->powerOffsetPilot_pdpdch = 0;	// probably 0db.
+
+	// ... struct Dl_rate_matching_restriction *dl_rate_matching_restriction   /* OPTIONAL */;
+	// Ignored.  I suspect we do not need it if we used tfci.
+
+	// ... SF512_AndPilot_t     spreadingFactorAndPilot;
+	// Kinda verbose because we have to specify pilot bits only for SF=128 and 256,
+	// but here it is:
+	unsigned npilot = mDlSlot->mNPilot;
+	switch (this->mDlSF) {
+	case 4: fdd->spreadingFactorAndPilot.present = ASN::SF512_AndPilot_PR_sfd4; break;
+	case 8: fdd->spreadingFactorAndPilot.present = ASN::SF512_AndPilot_PR_sfd8; break;
+	case 16: fdd->spreadingFactorAndPilot.present = ASN::SF512_AndPilot_PR_sfd16; break;
+	case 32: fdd->spreadingFactorAndPilot.present = ASN::SF512_AndPilot_PR_sfd32; break;
+	case 64: fdd->spreadingFactorAndPilot.present = ASN::SF512_AndPilot_PR_sfd64; break;
+	case 128:
+		fdd->spreadingFactorAndPilot.present = ASN::SF512_AndPilot_PR_sfd128;
+		switch (npilot) {
+		case 4:
+			fdd->spreadingFactorAndPilot.choice.sfd128 = toAsnEnumerated(ASN::PilotBits128_pb4);
+			break;
+		case 8:
+			fdd->spreadingFactorAndPilot.choice.sfd128 = toAsnEnumerated(ASN::PilotBits128_pb8);
+			break;
+		default: assert(0);
+		}
+		break;
+	case 256:
+		fdd->spreadingFactorAndPilot.present = ASN::SF512_AndPilot_PR_sfd256;
+		switch (npilot) {
+		case 2:
+			fdd->spreadingFactorAndPilot.choice.sfd256 = toAsnEnumerated(ASN::PilotBits256_pb2);
+			break;
+		case 4:
+			fdd->spreadingFactorAndPilot.choice.sfd256 = toAsnEnumerated(ASN::PilotBits256_pb4);
+			break;
+		case 8:
+			fdd->spreadingFactorAndPilot.choice.sfd256 = toAsnEnumerated(ASN::PilotBits256_pb8);
+			break;
+		default: assert(0);
+		}
+		break;
+	case 512:	// We dont use SF-512.
+	default: assert(0);
+	}
+
+	// ... PositionFixedOrFlexible_t    positionFixedOrFlexible;
+	fdd->positionFixedOrFlexible = toAsnEnumerated(ASN::PositionFixedOrFlexible_fixed);
+
+	// ... BOOLEAN_t    tfci_Existence;
+	fdd->tfci_Existence = 1;	// true;
+
+	// ^^^ struct DL_DPCH_InfoCommon__modeSpecificInfo__fdd { } choice;
+	// ^^ union DL_DPCH_InfoCommon__modeSpecificInfo_u { } fdd;
+	// ^^ struct DL_DPCH_InfoCommon__modeSpecificInfo { } modeSpecificInfo;
+	return result;
+}
 
 // 25.331 10.3.6.24 Downlink Info Common for all Radio Links
 ASN::DL_CommonInformation * PhCh::toAsnDL_CommonInformation()
@@ -540,6 +711,25 @@ ASN::DL_CommonInformation * PhCh::toAsnDL_CommonInformation()
 	ASN::DL_CommonInformation *result = RN_CALLOC(ASN::DL_CommonInformation);
 	result->dl_DPCH_InfoCommon = toAsnDL_DPCH_InfoCommon();
 	result->modeSpecificInfo.present = ASN::DL_CommonInformation__modeSpecificInfo_PR_fdd;
+	result->modeSpecificInfo.choice.fdd.defaultDPCH_OffsetValue = RN_CALLOC(ASN::DefaultDPCH_OffsetValueFDD_t);
+	*(result->modeSpecificInfo.choice.fdd.defaultDPCH_OffsetValue) = 0;
+
+	// v struct DL_CommonInformation__modeSpecificInfo__fdd {...} fdd;
+	//   All of these are optional, so just ignore them:
+	// . DefaultDPCH_OffsetValueFDD_t    *defaultDPCH_OffsetValue    /* OPTIONAL */;
+	// . struct DPCH_CompressedModeInfo  *dpch_CompressedModeInfo    /* OPTIONAL */;
+	// . TX_DiversityMode_t  *tx_DiversityMode   /* OPTIONAL */;
+	// . struct SSDT_Information *dummy  /* OPTIONAL */;
+	// ^ struct DL_CommonInformation__modeSpecificInfo__fdd {...} fdd;
+	return result;
+}
+
+// 25.331 10.3.6.24 Downlink Info Common for all Radio Links
+ASN::DL_CommonInformation_r4 * PhCh::toAsnDL_CommonInformation_r4()
+{
+	ASN::DL_CommonInformation_r4 *result = RN_CALLOC(ASN::DL_CommonInformation_r4);
+	result->dl_DPCH_InfoCommon = toAsnDL_DPCH_InfoCommon_r4();
+	result->modeSpecificInfo.present = ASN::DL_CommonInformation_r4__modeSpecificInfo_PR_fdd;
 	result->modeSpecificInfo.choice.fdd.defaultDPCH_OffsetValue = RN_CALLOC(ASN::DefaultDPCH_OffsetValueFDD_t);
 	*(result->modeSpecificInfo.choice.fdd.defaultDPCH_OffsetValue) = 0;
 
@@ -612,6 +802,66 @@ ASN::DL_DPCH_InfoPerRL *PhCh::toAsnDL_DPCH_InfoPerRL()
 	return result;
 }
 
+// 25.331 10.3.6.21 Downlink DPCH for each Radio Link.
+ASN::DL_DPCH_InfoPerRL_r4 *PhCh::toAsnDL_DPCH_InfoPerRL_r4()
+{
+	ASN::DL_DPCH_InfoPerRL_r4 *result = RN_CALLOC(ASN::DL_DPCH_InfoPerRL_r4);
+	result->present = ASN::DL_DPCH_InfoPerRL_r4_PR_fdd;
+
+	// This is a boolean value:
+	// PCPICH_UsageForChannelEst_t  pCPICH_UsageForChannelEst;
+	int cpichUsage = gConfig.getNum("UMTS.PCPICHUsageForChannelEst");
+	assert(cpichUsage == 0 || cpichUsage == 1);	// kinda harsh
+	int asncuval = cpichUsage ?
+		ASN::PCPICH_UsageForChannelEst_mayBeUsed :
+		ASN::PCPICH_UsageForChannelEst_shallNotBeUsed;
+	result->choice.fdd.pCPICH_UsageForChannelEst = toAsnEnumerated(asncuval);
+
+	// "Offset in number of chips between the beginning of the P-CCPCH frame
+	// and the beginning of the DPCH frame" aka Tau(DPCH,n)
+	// DPCH_FrameOffset_t   dpch_FrameOffset;
+	int dpchFrameOffset = gConfig.getNum("UMTS.DPCHFrameOffset");
+	assert(dpchFrameOffset >= 0 && dpchFrameOffset <= 38144);	// harsh
+	assert(dpchFrameOffset % 256 == 0);
+	//result->choice.fdd.dpch_FrameOffset = dpchFrameOffset / 256;
+	result->choice.fdd.dpch_FrameOffset = 0;
+
+
+	// struct SecondaryCPICH_Info  *secondaryCPICH_Info    /* OPTIONAL */;
+
+	// Eventually we are going to find the darned Channelization code in here.
+	// DL_ChannelisationCodeList_t  dl_ChannelisationCodeList;
+	ASN::DL_ChannelisationCode *one = RN_CALLOC(ASN::DL_ChannelisationCode);
+
+#define DORKINESS(spf) \
+	case spf: \
+		one->sf_AndCodeNumber.present = ASN::SF512_AndCodeNumber_PR_sf##spf; \
+		one->sf_AndCodeNumber.choice.sf##spf = SpCode(); \
+		break;
+
+	switch (this->mDlSF) {
+		DORKINESS(4)
+		DORKINESS(8)
+		DORKINESS(16)
+		DORKINESS(32)
+		DORKINESS(64)
+		DORKINESS(128)
+		DORKINESS(256)
+		DORKINESS(512)
+		default:assert(0);
+	}
+	ASN_SEQUENCE_ADD(&result->choice.fdd.dl_ChannelisationCodeList,one);
+
+	// This is for multiple radio links, and we will never use it, so just default it:
+	// TPC_CombinationIndex_t   tpc_CombinationIndex;
+	result->choice.fdd.tpc_CombinationIndex = 0;	// a fine wonderful tpc index.
+
+	// SSDT_CellIdentity_t *dummy  /* OPTIONAL */;
+	// ClosedLoopTimingAdjMode_t   *closedLoopTimingAdjMode    /* OPTIONAL */;
+
+	return result;
+}
+
 // 25.331 10.3.6.27 Downlink information for each radio link
 ASN::DL_InformationPerRL_List * PhCh::toAsnDL_InformationPerRL_List()
 {
@@ -627,6 +877,28 @@ ASN::DL_InformationPerRL_List * PhCh::toAsnDL_InformationPerRL_List()
 
 	// struct DL_DPCH_InfoPerRL    *dl_DPCH_InfoPerRL  /* OPTIONAL */;
 	one->dl_DPCH_InfoPerRL = toAsnDL_DPCH_InfoPerRL();
+
+	// struct SCCPCH_InfoForFACH   *dummy  /* OPTIONAL */;
+
+	ASN_SEQUENCE_ADD(&result->list,one);
+	return result;
+}
+
+// 25.331 10.3.6.27 Downlink information for each radio link
+ASN::DL_InformationPerRL_List_r4 * PhCh::toAsnDL_InformationPerRL_List_r4()
+{
+	ASN::DL_InformationPerRL_List_r4 *result = RN_CALLOC(ASN::DL_InformationPerRL_List_r4);
+
+	ASN::DL_InformationPerRL_r4 *one = RN_CALLOC(ASN::DL_InformationPerRL_r4);
+
+	one->modeSpecificInfo.present = ASN::DL_InformationPerRL_r4__modeSpecificInfo_PR_fdd;
+	// 10.3.6.60 Primary Scrambling Code (CPICH) in the range 0..511
+	int primarySC = gConfig.getNum("UMTS.Downlink.ScramblingCode");
+	assert(primarySC >= 0 && primarySC < 512);	// kinda harsh.
+	one->modeSpecificInfo.choice.fdd.primaryCPICH_Info.primaryScramblingCode = primarySC;
+
+	// struct DL_DPCH_InfoPerRL    *dl_DPCH_InfoPerRL  /* OPTIONAL */;
+	one->dl_DPCH_InfoPerRL = toAsnDL_DPCH_InfoPerRL_r4();
 
 	// struct SCCPCH_InfoForFACH   *dummy  /* OPTIONAL */;
 
@@ -837,7 +1109,7 @@ ChannelTree::ChannelTree()
 void ChannelTree::chPopulate(ARFCNManager *radio)
 {
 	const unsigned numscr = 16777216;	// Number of uplink scrambling codes = 2**24
-
+	
 	// The uplink scrambling codes should probably be chosen so as to maximize
 	// the distance between adjacent cells using the same scrambing codes.
 	// Currently we use a consecutive block of about 512 scrambling codes.
@@ -848,7 +1120,9 @@ void ChannelTree::chPopulate(ARFCNManager *radio)
 	// These two channels are reserved by order of the UMTS gods.  See 25.213 5.2.1
 	chReserve(256,0);	// primary CPICH
 	chReserve(256,1);	// primary CCPCH a.k.a. BCH.
+	chReserve(256, cAICHSpreadingCodeIndex);	// AICH
 
+	int dchCounter = 0;
 	unsigned sf = 4;
 	for (Tier tier = 0; tier < sNumTiers; tier++, sf *= 2) {
 		for (unsigned chcode = 0; chcode < sf; chcode++) {
@@ -856,12 +1130,14 @@ void ChannelTree::chPopulate(ARFCNManager *radio)
 			// TODO: We may want to limit the uplink SF
 			// TODO: The encoder/decoders cannot currently handle the large channels.
 			// TODO: The uplink spreading factor is the maximum, not the actual that will be used.
-                        DCHFEC *dch = new DCHFEC(sf,chcode,(sf==4) ? 4: (sf/2),ulScramblingCode,radio);
-			//DCHFEC *dch = new DCHFEC(sf,chcode,(sf<16) ? 8 : (sf/2),ulScramblingCode,radio);
-			//dch->setRadio(radio);
-			mTree[tier][chcode].mDch = dch;
+			DCHFEC *dch = new DCHFEC(sf, chcode, sf, ulScramblingCode, radio);
+			int threadId = dchCounter % MAX_DCH_THREADS;
+			dch->setThreadId(threadId);
+			
+			mTree[tier][chcode].mDch = dch;	
 			ulScramblingCode+=37841;	// Next uplink scrambling code, please.
 			ulScramblingCode = ulScramblingCode % numscr;
+			dchCounter++;
 		}
 	}
 }

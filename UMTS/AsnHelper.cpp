@@ -12,6 +12,10 @@
  * See the LEGAL file in the main directory for details.
  */
 
+// Set to 1 to enable ASN.1 protocol message logging (expensive — heavy
+// string formatting of every RRC/NAS message).  Disabled by default.
+#define ENABLE_ASN_LOGGING 0
+
 #include "AsnHelper.h"
 //#include "ByteVector.h"	included from AsnHelper.h
 #include "SgsnBase.h"		// For the layer 3 logging facility.
@@ -236,6 +240,9 @@ void asnLogMsg(unsigned rbid, ASN::asn_TYPE_descriptor_t *asnp, const void *stru
 	UEInfo *uep,		// Or NULL if none.
 	uint32_t urnti)		// If uep is NULL, put this in the log instead.
 {
+#if !ENABLE_ASN_LOGGING
+	return;  // Disabled — heavy ASN.1 string formatting; set ENABLE_ASN_LOGGING=1 to enable
+#endif
 	int debug = gConfig.getNum("UMTS.Debug.Messages");
 	if (debug || IS_LOG_LEVEL(INFO)) {
 		// This C++ IO paradigm is so crappy.

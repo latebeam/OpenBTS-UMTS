@@ -228,6 +228,7 @@ const char * Parser::help(const string& cmd) const
 // Return a map containing the options found; if option in optstring was followed by ':', map value will be the next argv argument, otherwise "true".
 // Leave argc,argv pointing at the first argument after the options, ie, on return argc is the number of non-option arguments remaining in argv.
 // This routine does not allow combining options, ie, -a -b != -ab
+#if 0 // Unused
 static map<string,string> cliParse(int &argc, char **&argv, ostream &os, const char *optstring)
 {
 	map<string,string> options;		// The result
@@ -261,13 +262,16 @@ static map<string,string> cliParse(int &argc, char **&argv, ostream &os, const c
 	}
 	return options;
 }
+#endif
 
 
 /**@name Commands for the CLI. */
 //@{
 
 // forward refs
+#if 0 // Unused
 static CLIStatus printStats(int argc, char** argv, ostream& os);
+#endif
 
 /*
 	A CLI command takes the argument in an array.
@@ -366,6 +370,7 @@ static CLIStatus exit_function(int argc, char** argv, ostream& os)
 }
 
 
+#if 0 // Unused
 /** Print or clear the TMSI table. */
 static const char *tmsisHelp = "[-l | clear | dump [-l] <filename> | -delete -tmsi <tmsi> | -delete -imsi <imsi> | -query <query>] --\n"
 	"   default print the TMSI table;  -l gives longer listing;\n"
@@ -374,6 +379,7 @@ static const char *tmsisHelp = "[-l | clear | dump [-l] <filename> | -delete -tm
 	"   -delete - delete entry for specified imsi or tmsi;\n"
 	"   -query - run sql query, which may be quoted, eg: tmsis -query \"UPDATE TMSI_TABLE SET AUTH=0 WHERE IMSI=='123456789012'\" This option may be removed in future."
 	;
+#endif
 /*
 static CLIStatus tmsis(int argc, char** argv, ostream& os)
 {
@@ -473,7 +479,7 @@ static CLIStatus sendsimple(int argc, char** argv, ostream& os)
 		"To: sip:IMSI%s@127.0.0.1\n"
 		"Call-ID: %x@127.0.0.1:%d\n"
 		"CSeq: 1 MESSAGE\n"
-		"Content-Type: text/plain\nContent-Length: %u\n"
+		"Content-Type: text/plain\nContent-Length: %lu\n"
 		"\n%s\n";
 	static char buffer[1500];
 	snprintf(buffer,1499,form,
@@ -1088,7 +1094,7 @@ static CLIStatus page(int argc, char **argv, ostream& os)
 	return SUCCESS;
 }
 
-
+#if 0 // Unused
 static CLIStatus endcall(int argc, char **argv, ostream& os)
 {
 	if (argc!=2) return BAD_NUM_ARGS;
@@ -1101,6 +1107,7 @@ static CLIStatus endcall(int argc, char **argv, ostream& os)
 	target->terminate();
 	return SUCCESS;
 }
+#endif
 
 
 static CLIStatus power(int argc, char **argv, ostream& os)

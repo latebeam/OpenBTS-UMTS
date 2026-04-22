@@ -56,8 +56,9 @@ enum UEState {
 };
 const char *UEState2Name(UEState state);
 
-struct UEDefs
+class UEDefs
 {
+public:
 	enum TransType {
 		ttComplete,				// Transaction never used, or Transaction complete.
 		ttRrcConnectionSetup,
@@ -71,6 +72,8 @@ struct UEDefs
 
 	// 4 because the transactionId is only 2 bits.
 	static const unsigned sMaxTransaction = 4;
+
+	virtual ~UEDefs() {}
 };
 
 // Master Channel Config.
@@ -125,6 +128,8 @@ class RrcMasterChConfig : public RrcDefs
 	// FIXME: Finish this.  I set up the RBInfo and TrChInfo, but we still
 	// need to do the other stuff in rrcAllocateRabForPdp.
 	void rrcConfigDchCS(DCHFEC *dch);
+
+	void rrcConfigDchCSSRB();
 
 	// TODO: uplink function = none, RLC bypassed
 };
@@ -397,7 +402,7 @@ class UEInfo : public SGSN::MSUEAdapter, public UEDefs
 		gRrc.addUE(this);
 	}
 
-	~UEInfo() {
+	virtual ~UEInfo() {
 		ueDisconnectRlc(stCELL_FACH);
 		ueDisconnectRlc(stCELL_DCH);
 	}
@@ -475,6 +480,10 @@ class UEInfo : public SGSN::MSUEAdapter, public UEDefs
 	void msWriteHighSide(ByteVector &dlpdu, uint32_t rbid, const char *descr);	// Called by SGSN
 	void msDeactivateRabs(unsigned rabMask);	// Called by SGSN.
 	uint32_t msGetHandle() { return mURNTI; }
+
+	void startRttMeasurement(MeasInterface *measInterface);
+	void stopRttMeasurement();
+	bool isRttMeasurementStarted() const;
 };
 std::ostream& operator<<(std::ostream& os, const UEInfo*uep);
 

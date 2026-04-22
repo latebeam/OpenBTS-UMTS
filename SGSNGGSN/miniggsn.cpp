@@ -573,7 +573,7 @@ bool miniggsn_init()
 	}
 
 	// Firewall rules:
-	bool firewall_enable;
+	long firewall_enable;
 	if ((firewall_enable = gConfig.getNum("GGSN.Firewall.Enable"))) {
 		// Block anything in the routed range:
 		addFirewallRule(route_basenl,route_masknl);
@@ -610,7 +610,7 @@ bool miniggsn_init()
 		MGINFO("  GGSN.MS.IP.Route=%s", route_str);
 		MGINFO("  GGSN.IP.MaxPacketSize=%d", ggConfig.mgMaxPduSize);
 		MGINFO("  GGSN.IP.ReuseTimeout=%d", ggConfig.mgIpTimeout);
-		MGINFO("  GGSN.Firewall.Enable=%d", firewall_enable);
+		MGINFO("  GGSN.Firewall.Enable=%ld", firewall_enable);
 		MGINFO("  GGSN.IP.TossDuplicatePackets=%d", ggConfig.mgIpTossDup);
 	if (firewall_enable) {
 		MGINFO("GGSN Firewall Rules:");

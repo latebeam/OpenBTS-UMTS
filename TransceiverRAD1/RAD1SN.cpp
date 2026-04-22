@@ -67,6 +67,7 @@ die (const char *msg)
 }
 #endif
 
+#if 0 // unused
 static int 
 hexval (char ch)
 {
@@ -81,7 +82,9 @@ hexval (char ch)
 
   return -1;
 }
+#endif
 
+#if 0 // unused
 static unsigned char *
 hex_string_to_binary (const char *string, int *lenptr)
 {
@@ -107,7 +110,9 @@ hex_string_to_binary (const char *string, int *lenptr)
   }
   return buf;
 }
+#endif
 
+#if 0 // unused
 static void
 print_hex (FILE *fp, unsigned char *buf, int len)
 {
@@ -116,6 +121,7 @@ print_hex (FILE *fp, unsigned char *buf, int len)
   }
   fprintf (fp, "\n");
 }
+#endif
 
 static void
 chk_result (bool ok)
@@ -126,6 +132,7 @@ chk_result (bool ok)
   }
 }
 
+#if 0 // unused
 static bool
 get_on_off (const char *s)
 {
@@ -138,6 +145,7 @@ get_on_off (const char *s)
   usage ();			// no return
   return false;
 }
+#endif
 
 
 int
@@ -155,6 +163,7 @@ main (int argc, char **argv)
 
     case 'v':
       verbose = true;
+      (void)verbose; // unused
       break;
       
     case 'w':
@@ -163,6 +172,7 @@ main (int argc, char **argv)
       
     case 'x':
       fx2_ok_p = true;
+      (void)fx2_ok_p; // unused
       break;
       
     default:

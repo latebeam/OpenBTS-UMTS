@@ -21,9 +21,19 @@
 #include "Sockets.h"
 #include "UMTSCodes.h"
 #include <Configuration.h>
+#include <queue>
+#include <numeric>
+#include <algorithm>
+#include <memory>
+
+#define SLOT_AVG_RTT_MAX_COUNT 72
+#define AVG_RTT_MAX_COUNT 144
+#define SLOTS_PER_FRAME 15
+#include <set>
 
 extern ConfigurationTable gConfig;
 
+static const int MAX_DCH_THREADS = 8;
 
 namespace UMTS {
 
@@ -69,7 +79,7 @@ struct RACHProcessorInfo {
 };
 
 struct DCHProcessorInfo {
-        void *burst; // actually DCHFEC;
+        std::shared_ptr<const signalVector> burst;
         UMTS::Time burstTime;
 	void *fec;
         DCHProcessorInfo() { RN_MEMCHKNEW(DCHProcessorInfo); }
@@ -83,8 +93,8 @@ struct DCHLoopInfo {
 
 // Assuming one sample per chip.  
 
-        class DPDCH
-        {
+class DPDCH
+{
         public:
         void* fec;
         UMTS::Time frameTime;
@@ -99,20 +109,81 @@ struct DCHLoopInfo {
         float lastTOA;
         float powerMultiplier;
 
-        DPDCH(void* wFEC, UMTS::Time wTime): fec(wFEC), frameTime(wTime)
+        unsigned int mRxRadioFrameCounter;
+        std::deque<float> dequeRTT;
+        std::deque<float> dequeSlotAvgRTT;
+
+        // Bootstrap state — after signal loss (lastTOA=-10000), require
+        // N consecutive strong samples to agree on TOA before trusting
+        // the new lock.  Prevents "bad lock" on noise peaks.
+        float bootstrapTOA;        // candidate TOA being verified
+        int   bootstrapCount;      // consecutive agreeing samples
+
+        DPDCH(void* wFEC, UMTS::Time wTime) :
+                fec(wFEC),
+                frameTime(wTime),
+                descrambledBurst(gFrameLen),
+                rawBurst(gFrameLen + gSlotLen),
+                active(true),
+                bestTOA(-10000.0),
+                bestChannel(1.0),
+                bestSNR(-1000.0),
+                lastTOA(-10000.0),
+                powerMultiplier(1.0),
+                mRxRadioFrameCounter(0),
+                bootstrapTOA(-10000.0),
+                bootstrapCount(0)
         {
-		active = true; 
-	 	descrambledBurst = signalVector(gFrameLen); 
-	 	rawBurst = signalVector(gFrameLen+gSlotLen); 
-	 	lastTOA = bestTOA = -10000.0; 
-	 	bestChannel = 1.0; 
-	 	powerMultiplier=1.0;
         }
 
         ~DPDCH()
         {}
 
-        };
+        void pushRTT(int slotIdx, float RTT)
+        {
+                dequeRTT.push_back(RTT);
+                if (dequeRTT.size() > AVG_RTT_MAX_COUNT)
+                        dequeRTT.pop_front();
+
+                if (slotIdx >= (SLOTS_PER_FRAME - 1)) {
+                        onPushLastSlotRTT();
+                }
+        }
+
+        void onPushLastSlotRTT()
+        {
+                // Calculate avg of this frame
+                std::deque<float>::reverse_iterator itRTT;
+                float sumRTT = 0;
+                int iSlotCount = 0;
+                for (itRTT = dequeRTT.rbegin(); itRTT != dequeRTT.rend(); ++itRTT)
+                {
+                        sumRTT += *itRTT;
+                        if (++iSlotCount >= SLOTS_PER_FRAME)
+                                break;
+                }
+                dequeSlotAvgRTT.push_back(sumRTT / (float)iSlotCount);
+                if (dequeSlotAvgRTT.size() > SLOT_AVG_RTT_MAX_COUNT) // bigger than superframe
+                        dequeSlotAvgRTT.pop_front();
+        }
+
+        static float getAvgRTT(const std::deque<float> &rRTT) {
+                float RTT = 0;
+                if (!rRTT.empty()) {
+                        float sumRTT = std::accumulate(rRTT.begin(), rRTT.end(), 0.0f);
+                        RTT = sumRTT / (float)rRTT.size();
+                }
+                return RTT;
+        }
+
+        float getAvgRTT() const {
+                return getAvgRTT(dequeRTT);
+        }
+
+        float getSlotAvgRTT() const {
+                return getAvgRTT(dequeSlotAvgRTT);
+        }
+};
 
 
 // TODO: The RadioModem needs a loop to call transmitSlot repeatedly.
@@ -143,8 +214,10 @@ public:
 	};
 */
 	std::map<void*,DPDCH*> gActiveDPDCH;
+	Mutex gActiveDPDCHLock;	// protects gActiveDPDCH from concurrent DCH processor threads
 
 
+	signalVector *mPreallocBurst;  // pre-allocated burst for receiveBurst()
 	UDPSocket& mDataSocket;
 
 
@@ -172,7 +245,7 @@ public:
 
         InterthreadQueueWithWait<FECDispatchInfo> mDispatchQueue;
         InterthreadQueueWithWait<RACHProcessorInfo> mRACHQueue;
-        InterthreadQueueWithWait<DCHProcessorInfo> mDCHQueue[100];
+        InterthreadQueueWithWait<DCHProcessorInfo> mDCHQueue[MAX_DCH_THREADS];
 
         friend void *FECDispatchLoopAdapter(RadioModem*);
         friend void *RACHLoopAdapter(RadioModem*);
@@ -180,8 +253,72 @@ public:
 
         static constexpr float mRACHThreshold = 10.0;
 
-
 private:
+
+        // Per-signature state tracking
+        struct RACHSignatureState {
+            int consecutiveCount;
+            float consecutiveTOA;
+            UMTS::Time lastDetectionTime;
+
+            RACHSignatureState() : consecutiveCount(0), consecutiveTOA(0.0) {}
+        };
+
+        std::map<int, RACHSignatureState> mRACHSignatureStates;
+        Mutex mRACHStateLock;
+
+/*
+        // Queue for multiple pending RACH messages
+        struct PendingRACHMessage {
+            int signature;
+            int subchannel;
+            float TOA;
+            int controlSpreadingCodeIndex;
+            int dataSpreadingCodeIndex;
+            UMTS::Time detectionTime;
+            UMTS::Time responseTime;
+
+            // Add per-slot TOA tracking
+            float slotTOAs[15];
+            int slotsDecoded;
+            float avgTOA;
+
+            PendingRACHMessage() : slotsDecoded(0), avgTOA(0.0) {
+                for (int i = 0; i < 15; i++) slotTOAs[i] = 0.0;
+            }
+        };
+*/
+        struct PendingRACHMessage {
+            int signature;
+            int subchannel;
+            float TOA;
+            int controlSpreadingCodeIndex;
+            int dataSpreadingCodeIndex;
+            UMTS::Time detectionTime;
+            UMTS::Time responseTime;
+            int slotsDecoded;
+            float slotTOAs[15];
+            float avgTOA;
+            signalVector descrambledFrame;  // Per-message descrambling buffer
+            float tfciBits[30];             // Per-message TFCI storage
+
+            PendingRACHMessage()
+                : signature(0), subchannel(0), TOA(0.0),
+                  controlSpreadingCodeIndex(0), dataSpreadingCodeIndex(0),
+                  slotsDecoded(0), avgTOA(0.0),
+                  descrambledFrame(gFrameLen)  // Initialize buffer
+            {
+                for (int i = 0; i < 15; i++) slotTOAs[i] = 0.0;
+                for (int i = 0; i < 30; i++) tfciBits[i] = 0.0;
+            }
+        };
+
+        std::deque<PendingRACHMessage> mPendingRACHMessages;
+        Mutex mPendingRACHLock;
+
+
+        // Base configuration values
+        int mRACHBaseSignature;
 
 	// receive data
         void receiveSlot (signalVector *wBurst, UMTS::Time wTime);
@@ -191,6 +328,10 @@ private:
         // hash function is (scramblingcode*6)+nP
         std::map<int,signalVector**> mUplinkPilotWaveformMap;
         std::map<int,UplinkScramblingCode*> mUplinkScramblingCodes;
+        // Protects both maps above. DCHLoopAdapter runs MAX_DCH_THREADS
+        // threads concurrently; without this lock, concurrent insert on one
+        // thread can corrupt map internals while another thread is reading.
+        Mutex mUplinkWaveformLock;
 
         inline int waveformMapHash(int scramblingCode, int nP) { return scramblingCode*6+nP;}
 
@@ -213,7 +354,7 @@ private:
         int mRACHCorrelatorSize;
 	int mRACHPreambleOffset;
 	int mRACHPilotsOffset;
-	signalVector *mRACHMessagePilotWaveforms[gFrameSlots];
+	signalVector *mRACHMessagePilotWaveforms[16][gFrameSlots]; // [signature][slot]
 	int mRACHMessageControlSpreadingFactorLog2;
 	int mRACHMessageDataSpreadingFactorLog2;
 	int mRACHMessageControlSpreadingCodeIndex;
@@ -254,12 +395,12 @@ private:
 	static const radioData_t mCPICHAmplitude = 5;
   	static const radioData_t mPSCHAmplitude = 2;  // usually 3dB below CPICH, but can be signifcantly lower (PSCH not scrambled)
   	static const radioData_t mSSCHAmplitude = 5;  // usually 3dB below CPICH (keep in mind SSCH not scrambled)
-  	static const radioData_t mCCPCHAmplitude = 2; // e.g. typically CPCCH is 5 dB below CPICH, AICH level is set in SIB5, etc.
+  	static const radioData_t mCCPCHAmplitude = 5;
 	static const radioData_t mAICHAmplitude = 20; // FIXME: Is this right?
 	static const radioData_t mDCHAmplitude = 10;
 	Thread mFECDispatcher;
 	Thread mRACHProcessor;
-	Thread mDCHProcessor[100];
+	Thread mDCHProcessor[MAX_DCH_THREADS];
 
 	/* Generate a table of pilot sequences for lookup and later correlation 
 	   Defined Sec. 5.2.1.1 of 25.211, dependes upon higher layer parameters and the slot */
@@ -302,10 +443,11 @@ private:
 	signalVector* descramble(signalVector &wBurst, int8_t *codeI, int8_t *codeQ, signalVector *retVec = NULL);
 
 	/* Despread a descrambled burst...essentially an integrate(add/subtract) and dump operation on floats. */
-	signalVector *despread(signalVector &wBurst, 
+	signalVector *despread(signalVector &wBurst,
                                const int8_t *code,
                                int codeLength,
-			       bool useQ);
+			       bool useQ,
+			       signalVector *retVec = NULL);
 	
 	/* Spread a scrambled burst...essentially an Kronecker product */
 	void spread(BitVector &wBurst, int8_t *code, int codeLen, radioData_t *accI, radioData_t *accQ, int accLen, radioData_t gain = 1);
@@ -320,19 +462,12 @@ private:
 	/* Decode expected RACH message */
         bool decodeRACHMessage(signalVector &wBurst, UMTS::Time wTime, float detectionThreshold);
 
-	/* Decode expected DCH burst */
-	bool decodeDCH(signalVector &wBurst,
+        /* Decode expected DCH burst */
+        bool decodeDCH(signalVector &wBurst,
                            UMTS::Time wTime,
                            int uplinkScramblingCodeIndex,
                            int numPilots,
-                           signalVector &descrambledBurst,
-			   signalVector &rawBurst,
-                           float &guessTOA,
-                           float &bestTOA,
-                           complex &bestChannel,
-                           float &bestSNR,
-                           float *TFCI,
-			   float *TPC);
+                           DPDCH *currDPDCH);
 
 	bool decodeDPDCHFrame(DPDCH &frame,
 			      int uplinkScramblingCodeIndex,

@@ -162,6 +162,11 @@ void l2RlcStart()
 	mRrcUplinkThread.start(rrcUplinkServiceLoop,0);
 }
 
+void pushRrcUplinkMessage(UEInfo *uep, UMTS::RbId rbid, ByteVector *sdu)
+{
+	gRrcUplinkQueue.write(new RrcUplinkMessage(sdu, uep, rbid));
+}
+
 // Send an sdu out the high side of the rlc, routed based on rbid.
 void URlcRecv::rlcSendHighSide(URlcUpSdu *sdu)
 {
@@ -246,7 +251,7 @@ void URlcRecv::rlcSendHighSide(URlcUpSdu *sdu)
 // nope: We're going to use CNF for both Confirmation and Discard requests.
 void URlcTrans::rlcWriteHighSide(ByteVector &data, bool DiscardReq, unsigned MUI,string descr)
 {
-	RLCLOG("rlcWriteHighSide sizebytes=%d rbid=%d descr=%s",
+	RLCLOG("rlcWriteHighSide sizebytes=%lu rbid=%u descr=%s",
 		data.size(),mrbid,descr.c_str());
 
 	// pat 12-17: Changed the GGSN to pre-allocate this so we dont have to do it here.
@@ -457,7 +462,7 @@ bool URlcTransAmUm::fillPduData(URlcPdu *result,
 			break;
 		}
 		if (licnt == 100) break;
-		RLCLOG("fillpdu resultsize:%d sdusize=%d sdufinalbytes=%d remaining=%d",result->size(),sdusize,sdufinalbytes,remaining);
+		RLCLOG("fillpdu resultsize:%lu sdusize=%u sdufinalbytes=%u remaining=%u",result->size(),sdusize,sdufinalbytes,remaining);
 	} // for sdu
 
 	if (remaining >= libytes) {
@@ -479,9 +484,9 @@ bool URlcTransAmUm::fillPduData(URlcPdu *result,
 		for (int i = 0; i < licnt; i++) {
 			result->appendLIandE(vli[i],i != licnt-1,libytes);
 		}
-		RLCLOG("fillpdu after adding li, headersize:%d",result->size()); 
+		RLCLOG("fillpdu after adding li, headersize:%lu",result->size());
 	} else {
-		RLCLOG("fillpdu no li, headersize:%d",result->size()); 
+		RLCLOG("fillpdu no li, headersize:%lu",result->size());
 	}
 
 	// Step two: add the data from sducnt SDUs to the result PDU.
@@ -504,12 +509,12 @@ bool URlcTransAmUm::fillPduData(URlcPdu *result,
 			//printf("sdu->sduData(): %0x\n",sdu->sduData());
 			sdu->sduData()->trimLeft(sdufinalbytes);
 			mSplitSdu = sdu;
-			RLCLOG("fillpdu appending (partial) %d sdu bytes, result=%d bytes",
+			RLCLOG("fillpdu appending (partial) %u sdu bytes, result=%lu bytes",
 				sdufinalbytes, result->size());
 		} else {
 			// Copy the entire SDU.
 			result->append(sdu->sduData());
-			RLCLOG("fillpdu appending %d sdu bytes, result=%d bytes",
+			RLCLOG("fillpdu appending %lu sdu bytes, result=%lu bytes",
 				sdu->sduData()->size(), result->size());
 			mVTSDU++;
 			sdu->free();
@@ -546,7 +551,7 @@ URlcBasePdu *URlcTransAmUm::rlcReadLowSide()
 		pdu = readLowSidePdu();
 		wasqueued = false;
 	}
-	if (pdu) RLCLOG("readlLowSide(q=%d,sizebytes=%d,payloadsize=%d,descr=%s,rb=%d header=%s)",
+	if (pdu) RLCLOG("readlLowSide(q=%d,sizebytes=%lu,payloadsize=%u,descr=%s,rb=%u header=%s)",
 		wasqueued,pdu->size(),pdu->getPayloadSize(),
 		pdu->mDescr.c_str(),mrbid,pdu->segment(0,2).hexstr().c_str());
 
@@ -564,7 +569,7 @@ URlcBasePdu *URlcTransTm::rlcReadLowSide()
 		if (sdu->mDiscarded) {
 			sdu->free();
 		} else {
-			RLCLOG("readlLowSide(sizebits=%d,descr=%s,rb=%d)",
+			RLCLOG("readlLowSide(sizebits=%lu,descr=%s,rb=%u)",
 				sdu->sizeBits(), sdu->mDescr.c_str(),mrbid);
 			return sdu;
 		}
@@ -585,7 +590,7 @@ void URlcTransAmUm::rlcPullLowSide(unsigned amt)
 		//LOG(INFO) << "amt: " << amt << " sz: " << mPduOutQ.totalSize();
 	}
 
-	if (cnt) LOG(INFO) << format("rlcPullLowSide rb%d amt=%d sent %d pdus, pduq=%d(%dB), sduq=%d(%dB)",
+	if (cnt) LOG(INFO) << format("rlcPullLowSide rb%u amt=%u sent %d pdus, pduq=%lu(%luB), sduq=%u(%uB)",
 				mrbid,amt,cnt,mPduOutQ.size(),mPduOutQ.totalSize(),mSduTxQ.size(),mSduTxQ.totalSize());
 }
 
@@ -603,7 +608,7 @@ URlcPdu *URlcTransUm::readLowSidePdu()
 	if (mSduDiscarded && mConfig.mRlcDiscard.mSduDiscardMode != TransmissionRlcDiscard::NotConfigured) {
 		incSN(mVTUS);	// Informs peer that a discard occurred.
 	}
-	RLCLOG("readLowSidePdu sizebytes=%d",result->size());
+	RLCLOG("readLowSidePdu sizebytes=%lu",result->size());
 	return result;
 }
 
@@ -624,7 +629,7 @@ URlcPdu *URlcTransAm::getDataPdu()
         //LOG(INFO) << "fPD done " << gNodeB.clock().get();
 	result->setAmSN(mVTS);
 	result->setAmP(0);	// Until we know better.
-	RLCLOG("getDataPdu VTS=%d,VTA=%d bytes=%d header=%s dc=%d sn=%u",
+	RLCLOG("getDataPdu VTS=%d,VTA=%d bytes=%lu header=%s dc=%d sn=%d",
 		(int)mVTS,(int)mVTA,result->sizeBytes(),result->segment(0,2).hexstr().c_str(),
 		result->getBit(0),(int)result->getField(1,12));
 	if (mPduTxQ[mVTS]) {
@@ -729,7 +734,7 @@ bool URlcRecvAm::addAckNack(URlcPdu *pdu)
 					cp += sprintf(cp," %d",low[i]);
 					if (cnt[i]>1) { cp += sprintf(cp,"-%d(%d pdus)",low[i]+cnt[i]-1,cnt[i]);}
 
-					//RLCLOG("AFTER i=%d sizeBits=%d sizeRemaining=%d\n",i,pdu->sizeBits(),pdu->sizeRemaining());
+					//RLCLOG("AFTER i=%d sizeBits=%d sizeRemaining=%d",i,pdu->sizeBits(),pdu->sizeRemaining());
 				}
 				RLCLOG("%s",debugmsg);
 				found = true;
@@ -746,11 +751,11 @@ bool URlcRecvAm::addAckNack(URlcPdu *pdu)
 			// This can not happen on the first acknack, but may happen
 			// on subsequent ones because the pdu that was left to report
 			// has been received in the intervening period.
-			RLCLOG("Ack phase error mVRR=%d mVRH=%d but no missing pdus found\n",(int)mVRR,(int)mVRH);
+			RLCLOG("Ack phase error mVRR=%d mVRH=%d but no missing pdus found",(int)mVRR,(int)mVRH);
 		}
 	} else {
 		// Everything is up to date.
-		RLCLOG("Ack Sufi mVRR=%d mVRH=%d all ok\n",(int)mVRR,(int)mVRH);
+		RLCLOG("Ack Sufi mVRR=%d mVRH=%d all ok",(int)mVRR,(int)mVRH);
 		assert(firstStatusReport && lastStatusReport);
 	}
 	// 9.2.2.11.2 Ack SUFI is the last SUFI in the Status PDU.
@@ -812,6 +817,10 @@ void URlcTransAm::processSUFIs2(
 	RLCLOG("Sufis before: VTS=%d VTA=%d VSNack=%d NackedBlocksWaiting=%d",
 		(int)mVTS,(int)mVTA,(int)mVSNack,mNackedBlocksWaiting);
 	while (1) {
+		// Bounds check: if we've read past the end, stop.
+		// Without this, corrupted status PDUs cause infinite
+		// loops reading garbage memory, jamming the system.
+		if (rp + 4 > vec->size()) return;
 		SufiType sufitype = (SufiType) vec->readField(rp,4);
 		switch (sufitype) {
 		case SUFI_NO_MORE:
@@ -1651,7 +1660,7 @@ void URlcRecvAmUm::parsePduData(URlcPdu &pdu,
 				return;
 			}
 			if (lenbytes > payload.size()) {
-				RLCERR("Incoming piggy-back status LI size=%d less than PDU length=%d",
+				RLCERR("Incoming piggy-back status LI size=%u less than PDU length=%lu",
 						lenbytes,payload.size());
 				return;
 			}
@@ -1684,7 +1693,7 @@ void URlcRecvAmUm::parsePduData(URlcPdu &pdu,
 
 		// sanity check.
 		if (lenbytes > payload.size()) {
-			RLCERR("Incoming PDU LI size=%d less than PDU length=%d", lenbytes,payload.size());
+			RLCERR("Incoming PDU LI size=%u less than PDU length=%lu", lenbytes,payload.size());
 			n = licnt;	// End loop after this iteration.
 			lenbytes = payload.size();	// Should probably discard this.
 		}
@@ -1714,7 +1723,7 @@ void URlcRecvAm::rlcWriteLowSide(const BitVector &pdubits)
 
 		std::ostringstream foo;
 		pdubits.hex(foo);
-		RLCLOG("rlcWriteLowSide(control,sizebits=%d,pdutype=%d,payload=%s) mVRR=%d",
+		RLCLOG("rlcWriteLowSide(control,sizebits=%lu,pdutype=%d,payload=%s) mVRR=%d",
 				pdubits.size(),pdutype,foo.str().c_str(),(int)mVRR);
 
 		switch (pdutype) {
@@ -1758,7 +1767,7 @@ void URlcRecvAm::rlcWriteLowSide(const BitVector &pdubits)
 
 		std::ostringstream foo;
 		pdubits.hex(foo);
-		RLCLOG("rlcWriteLowSide(data,sizebits=%d,sn=%d,payload=%s) mVRR=%d",
+		RLCLOG("rlcWriteLowSide(data,sizebits=%lu,sn=%d,payload=%s) mVRR=%d",
 				pdubits.size(),(int)sn,foo.str().c_str(),(int)mVRR);
 
 		if (deltaSN(sn,mVRR) < 0) {

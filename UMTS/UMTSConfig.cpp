@@ -801,26 +801,29 @@ static void configureSIB5Parameters(SIB_TYPE *sib)
 {
     unsigned fachChCode = gConfig.getNum("UMTS.SCCPCH.SpreadingCode");
     unsigned pichChCode = fachChCode + 2;
-    
+
     sib->sib6indicator = 0;
     sib->pich_PowerOffset = gConfig.getNum("UMTS.PICH.PICH-PowerOffset");
-    
+
     // modeSpecificInfo
     sib->modeSpecificInfo.present = SysInfoType5__modeSpecificInfo_PR_fdd;
     sib->modeSpecificInfo.choice.fdd.aich_PowerOffset = gConfig.getNum("UMTS.AICH.AICH-PowerOffset");
-    
+
     // primaryCCPCH_Info
     sib->primaryCCPCH_Info = RN_CALLOC(ASN::PrimaryCCPCH_Info);
     sib->primaryCCPCH_Info->present = PrimaryCCPCH_Info_PR_fdd;
     sib->primaryCCPCH_Info->choice.fdd.tx_DiversityIndicator = false;
-    
+
     PRACH_SystemInformation *prach_SI = RN_CALLOC(PRACH_SystemInformation);
     prach_SI->prach_RACH_Info.modeSpecificInfo.present = PRACH_RACH_Info__modeSpecificInfo_PR_fdd;
-    
+
+    int numSigs = gConfig.getNum("UMTS.PRACH.Signature");
+    if (numSigs < 1) numSigs = 1;
+    if (numSigs > 16) numSigs = 16;
     uint16_t * PRACHSigs = RN_CALLOC(uint16_t);
-    *PRACHSigs = htons(0x0001 << gConfig.getNum("UMTS.PRACH.Signature"));
+    *PRACHSigs = htons((1 << numSigs) - 1);
     setAsnBIT_STRING(&prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSignatures,(uint8_t*)PRACHSigs,16);
-    
+
     unsigned rachSF = gConfig.getNum("UMTS.PRACH.SF");
         switch (rachSF) {
             case 256:
@@ -838,48 +841,50 @@ static void configureSIB5Parameters(SIB_TYPE *sib)
             default:
                 break;
 	}
-    
+
     prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.preambleScramblingCodeWordNumber = gConfig.getNum("UMTS.PRACH.ScramblingCode");
     asn_long2INTEGER(&(prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.puncturingLimit),PuncturingLimit_pl1);
-    
+
+    int numSubChan = gConfig.getNum("UMTS.PRACH.Subchannel");
+    if (numSubChan < 1) numSubChan = 1;
+    if (numSubChan > 12) numSubChan = 12;
     uint16_t * PRACHSubChan = RN_CALLOC(uint16_t);
-    *PRACHSubChan = htons(0x0010 << gConfig.getNum("UMTS.PRACH.Subchannel"));
+    *PRACHSubChan = htons(((1 << numSubChan) - 1) << 4);
     setAsnBIT_STRING(&prach_SI->prach_RACH_Info.modeSpecificInfo.choice.fdd.availableSubChannelNumbers,(uint8_t*)PRACHSubChan,12);
-    
+
     prach_SI->transportChannelIdentity = gRrcDcchConfig->getUlTrChInfo(0)->mTransportChannelIdentity;
-    
+
     gRrcCcchConfig->getUlTfs()->toAsnTfs((prach_SI->rach_TransportFormatSet = RN_CALLOC(ASN::TransportFormatSet)));
     gRrcCcchConfig->getUlTfcs()->toAsnTfcs((prach_SI->rach_TFCS = RN_CALLOC(ASN::TFCS)),TrChRACHType);
-    
+
     prach_SI->prach_Partitioning = RN_CALLOC(ASN::PRACH_Partitioning);
     prach_SI->prach_Partitioning->present = PRACH_Partitioning_PR_fdd;
-    
+
     AccessServiceClass_FDD_t *asc = RN_CALLOC(ASN::AccessServiceClass_FDD_t);
     asc->availableSignatureStartIndex = 0;
-    asc->availableSignatureEndIndex = 0;
+    asc->availableSignatureEndIndex = numSigs - 1;
     uint8_t *assignedSubChan = RN_CALLOC(uint8_t);
     *assignedSubChan = 0x0f << 4;
     setAsnBIT_STRING(&asc->assignedSubChannelNumber,assignedSubChan,4);
     ASCSetting_FDD_t *ptt = RN_CALLOC(ASN::ASCSetting_FDD_t);
     ptt->accessServiceClass_FDD = asc;
     ASN_SEQUENCE_ADD(&prach_SI->prach_Partitioning->choice.fdd.list,ptt);
-    
+
     prach_SI->ac_To_ASC_MappingTable = RN_CALLOC(ASN::AC_To_ASC_MappingTable);
     for (unsigned i = 0; i < 7; i++) {
         long *ac = newlong(0);
         ASN_SEQUENCE_ADD(&prach_SI->ac_To_ASC_MappingTable->list,ac);
     }
-    
+
     int cpichTxPower = gConfig.getNum("UMTS.CPICH.TxPower");
-    int prachPowerOffsetPowerRampStep = gConfig.getNum("UMTS.PRACH.PowerOffset.PowerRampStep");
-    
+
     prach_SI->modeSpecificInfo.present = PRACH_SystemInformation__modeSpecificInfo_PR_fdd;
     prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = RN_CALLOC(ASN::PrimaryCPICH_TX_Power_t);
     *prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = cpichTxPower;
     prach_SI->modeSpecificInfo.choice.fdd.constantValue = RN_CALLOC(ASN::ConstantValue_t);
     *prach_SI->modeSpecificInfo.choice.fdd.constantValue = -10;
     prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset = RN_CALLOC(ASN::PRACH_PowerOffset);
-    prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->powerRampStep = prachPowerOffsetPowerRampStep;
+    prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->powerRampStep = 3;
     prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->preambleRetransMax = 64;
     prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters = RN_CALLOC(ASN::RACH_TransmissionParameters);
     prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->mmax = 32;
@@ -888,13 +893,13 @@ static void configureSIB5Parameters(SIB_TYPE *sib)
     prach_SI->modeSpecificInfo.choice.fdd.aich_Info = RN_CALLOC(ASN::AICH_Info);
     prach_SI->modeSpecificInfo.choice.fdd.aich_Info->channelisationCode256 = cAICHSpreadingCodeIndex;
     prach_SI->modeSpecificInfo.choice.fdd.aich_Info->sttd_Indicator = false;
-    
+
     if (cAICHRACHOffset == 5) {
         asn_long2INTEGER(&(prach_SI->modeSpecificInfo.choice.fdd.aich_Info->aich_TransmissionTiming),AICH_TransmissionTiming_e1);
     }
-    
+
     ASN_SEQUENCE_ADD(&sib->prach_SystemInformationList.list,prach_SI);
-    
+
     // SCCPCH System Information List
     unsigned pchChCode = fachChCode + 1;
     SCCPCH_SystemInformation *sCCPCH_SI = generateSCCPCH(pchChCode, true, pichChCode);
@@ -902,7 +907,7 @@ static void configureSIB5Parameters(SIB_TYPE *sib)
     gChannelTree.chReserve(scc_sf, pchChCode);
     gChannelTree.chReserve(256, pichChCode);
     ASN_SEQUENCE_ADD(&sib->sCCPCH_SystemInformationList.list, sCCPCH_SI);
-    
+
     SCCPCH_SystemInformation *sCCPCH_SI2 = generateSCCPCH(fachChCode, false, 0);
     gChannelTree.chReserve(scc_sf, fachChCode);
     ASN_SEQUENCE_ADD(&sib->sCCPCH_SystemInformationList.list, sCCPCH_SI2);
@@ -1244,21 +1249,21 @@ void BeaconConfig::regenerate()
         ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_SysInfoType5bis, &mSIB5_BIS);
         memset(&mSIB5_BIS, 0, sizeof(mSIB5_BIS));
         configureSIB5Parameters(&mSIB5_BIS);
-        
+
         // add frequencyBandIndicator
-        mSIB5_BIS.v4b0NonCriticalExtensions = 
+        mSIB5_BIS.v4b0NonCriticalExtensions =
             (typeof(mSIB5_BIS.v4b0NonCriticalExtensions))
             calloc(1, sizeof(*mSIB5_BIS.v4b0NonCriticalExtensions));
-        
-        mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext = 
+
+        mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext =
             (typeof(mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext))
             calloc(1, sizeof(*mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext));
-        
-        mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator = 
+
+        mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator =
             (typeof(mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator))
             calloc(1, sizeof(*mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator));
-        
-        
+
+
         asn_long2INTEGER(mSIB5_BIS.v4b0NonCriticalExtensions->sysInfoType5_v4b0ext->frequencyBandIndicator, 7); // frequencyBandIndicator : VI
     } else {
         ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_SysInfoType5, &mSIB5);

@@ -118,8 +118,8 @@ INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PICH.PICH-PowerOffset','-10',0,0,'PI
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.DynamicPersistenceLevel','1',0,0,'Dynamic Persistence Level for PRACH channel.  Valid values unknown.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.SF','32',0,0,'Spreading Factor of PRACH.  Valid values are 32, 64, 128 and 256.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.ScramblingCode','0',0,0,'PRACH scrambling code for PRACH bursts.');
-INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.Signature','13',0,0,'Sequence used for PRACH accesses.');
-INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.Subchannel','1',0,0,'PRACH subchannel.');
+INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.Signature','2',0,0,'Number of RACH signatures to enable (1-16).');
+INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.PRACH.Subchannel','4',0,0,'Number of RACH subchannels to enable (1-12).');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.RLC.TransmissionBufferSize','1000000',0,0,'Buffer size in Bytes for RLC Transmission layer.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.Radio.ARFCNs','1',1,0,'The number of ARFCNs to use.  The ARFCN set will be C0, C0+2, C0+4, etc.  Static.');
 INSERT OR IGNORE INTO "CONFIG" VALUES('UMTS.Radio.Band','900',1,0,'The UMTS operating band.  Valid values are 850, 900, 1700, 1800, 1900 and 2100.  For most Range models, this value is dictated by the hardware and should not be changed.  Static.');

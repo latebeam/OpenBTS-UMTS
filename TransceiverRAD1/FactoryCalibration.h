@@ -33,7 +33,7 @@ class FactoryCalibration {
 
 	static int hexval (char ch);
 	static unsigned char * hex_string_to_binary(const char *string, int *lenptr);
-	bool i2c_write(int i2c_addr, char *hex_string);
+	bool i2c_write(int i2c_addr, const char *hex_string);
 	std::string i2c_read(int i2c_addr, int len);
 	unsigned int hex2dec(std::string hex);
 

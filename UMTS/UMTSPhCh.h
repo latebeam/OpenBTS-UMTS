@@ -17,14 +17,21 @@
 #include "Threads.h"
 #include "UMTSCommon.h"
 #include "TRXManager.h"
+#include "UMeasInterface.h"
 
 namespace ASN {
 struct UL_DPCH_Info;
+struct UL_DPCH_Info_r4;
 struct UL_ChannelRequirement;
+struct UL_ChannelRequirement_r4;
 struct DL_DPCH_InfoCommon;
+struct DL_DPCH_InfoCommon_r4;
 struct DL_CommonInformation;
+struct DL_CommonInformation_r4;
 struct DL_DPCH_InfoPerRL;
+struct DL_DPCH_InfoPerRL_r4;
 struct DL_InformationPerRL_List;
+struct DL_InformationPerRL_List_r4;
 };
 
 //#define RELEASE99
@@ -143,6 +150,9 @@ class PhCh
 	// For uplink DPCCH, need slot format to determine pilot, TFCI, TPC, and FBI locations
 	SlotFormat *mUlDPCCH;
 
+	MeasInterface *mMeasInterface;
+	uint32_t mRttMeasHandle;
+
 	// For uplink channels there are two additional slot formats required for data and control parts.
 	// The data slot format has no additional information for anyone.
 	// The control slot format has no info needed by L2, and is probably a constant for all channels anyway,
@@ -171,11 +181,17 @@ class PhCh
 
 	// ASN interface:
 	void toAsnUL_DPCH_Info(ASN::UL_DPCH_Info *iep);
+	void toAsnUL_DPCH_Info_r4(ASN::UL_DPCH_Info_r4 *iep);
 	ASN::UL_ChannelRequirement *toAsnUL_ChannelRequirement();
+	ASN::UL_ChannelRequirement_r4 *toAsnUL_ChannelRequirement_r4();
 	ASN::DL_DPCH_InfoCommon * toAsnDL_DPCH_InfoCommon();
+	ASN::DL_DPCH_InfoCommon_r4 * toAsnDL_DPCH_InfoCommon_r4();
 	ASN::DL_CommonInformation * toAsnDL_CommonInformation();
+	ASN::DL_CommonInformation_r4 * toAsnDL_CommonInformation_r4();
 	ASN::DL_DPCH_InfoPerRL *toAsnDL_DPCH_InfoPerRL();
+	ASN::DL_DPCH_InfoPerRL_r4 *toAsnDL_DPCH_InfoPerRL_r4();
 	ASN::DL_InformationPerRL_List *toAsnDL_InformationPerRL_List();
+	ASN::DL_InformationPerRL_List_r4 *toAsnDL_InformationPerRL_List_r4();
 
 	// Dont forget to multiply this by TTI.
 	unsigned getDlRadioFrameSize();
@@ -209,6 +225,12 @@ class PhCh
 	void phChClose() { mAllocated = false; }
 	//@}
 	bool phChAllocated() { return mAllocated; }
+
+	void subscribeRttMeasData(MeasInterface *measInterface, uint32_t rttMeasHandle) { mMeasInterface = measInterface; mRttMeasHandle = rttMeasHandle; };
+	void unsubscribeRttMeasData() { mMeasInterface = 0; mRttMeasHandle = 0; };
+	MeasInterface *getMeasInterface() { return mMeasInterface; }
+	uint32_t getRttMeasHandle() const { return mRttMeasHandle; }
+	bool isRttMeasDataSubscribed() const { return ((mMeasInterface != NULL) && (mRttMeasHandle > 0)); }
 };
 
 // Downlink only channel has spreading factor and spreading [channel] code
@@ -235,7 +257,7 @@ struct ChannelTreeElt
 	DCHFEC *mDch;	// The DPDCH, although we could put the other PhChs in here too. (SCCPCH, PCCPCH, etc)
 	bool available(bool checkOnlyReserved);
 	bool active(void);
-	ChannelTreeElt() : mReserved(0), mDch(0) {}
+	ChannelTreeElt() : mReserved(0), mAlsoReserved(0), mDch(0) {}
 };
 
 

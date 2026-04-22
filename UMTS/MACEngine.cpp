@@ -15,6 +15,7 @@
  */
 
 #define MAC_IMPLEMENTATION 1
+#include <set>
 #include "UMTSCommon.h"
 #include "URRCDefs.h"
 #include "URRCMessages.h"
@@ -196,7 +197,6 @@ void macHookupDch(DCHFEC_t *dch, UEInfo *uep)
 	mac->macSetDownstream(dch);
 	dch->l1SetUpstream(mac);
 	dch->open();		// adds the channel to the gActiveDch, starts upstream communication.
-	gMacSwitch.addMac(mac,false);	// starts downstream communication.
 	uep->mUeMac = mac;	// Remember these for macUnHookupDch.
 	uep->mUeDch = dch;
 }
@@ -210,9 +210,20 @@ void macUnHookupDch(UEInfo *uep)
 {
 	DCHFEC_t *dch = uep->mUeDch;
 	MacdBase *mac = uep->mUeMac;
-	if (mac) { gMacSwitch.rmMac(mac); }	// stops downstream communcation.
+
+	// Flag the MAC for deferred removal instead of calling rmMac() + delete.
+	// This eliminates the ABBA deadlock:
+	//   Thread A (macServiceLoop): holds mMacListLock, wants mUEListLock (inside flushUE)
+	//   Thread B (RRC):           holds mUEListLock, wants mMacListLock (inside rmMac)
+	// By deferring, Thread B no longer acquires mMacListLock at all.
+	// macServiceLoop will see the flag, skip servicing, and remove+delete
+	// the MAC itself while already holding mMacListLock.
+	if (mac) { mac->mPendingRemove = true; }
+
 	if (dch) {
-        	printf("unhooking DCH %0x\n",dch);
+		printf("unhooking DCH %p\n",dch);
+
+		uep->stopRttMeasurement(); // make sure that no longer measuring RTT
 
 		dch->close();		// closes physical channel and removes from gActiveDch.
 						// Note: Channel can be reallocated immediately.
@@ -220,7 +231,15 @@ void macUnHookupDch(UEInfo *uep)
 	}
 	uep->mUeMac = 0;
 	uep->mUeDch = 0;
-	if (mac) { delete mac; }
+	// NOTE: don't delete mac here — macServiceLoop owns it now and will
+	// delete after removing from mMacList.
+}
+
+void macFinishHookupDch(UEInfo *uep)
+{
+	if (uep->mUeMac) {
+		gMacSwitch.addMac(uep->mUeMac, false);
+	}
 }
 
 
@@ -318,8 +337,17 @@ MacdTbs::MacdTbs(UEInfo *uep, TfcMap &map) : MacTbs(map.mtfc)
 void MacSwitch::addMac(MacEngine *mac, bool useForCcch)
 {
 	mMacListLock.lock();
-	mMacList.push_back(mac);
-	if (useForCcch) { mCchList.push_back(dynamic_cast<MaccBase*>(mac)); }
+	// Idempotent — don't add the same MAC twice.  Some call paths end up
+	// calling macFinishHookupDch (→ addMac) when the MAC was already added
+	// on a previous call, which would corrupt the list with duplicates.
+	bool alreadyPresent = false;
+	for (MacList_t::iterator it = mMacList.begin(); it != mMacList.end(); ++it) {
+		if (*it == mac) { alreadyPresent = true; break; }
+	}
+	if (!alreadyPresent) {
+		mMacList.push_back(mac);
+		if (useForCcch) { mCchList.push_back(dynamic_cast<MaccBase*>(mac)); }
+	}
 	mMacListLock.unlock(); // Must release the mMacListLock before macServiceLoop to avoid deadlock.
 
 	// If we have not started the service loop yet, its time.
@@ -928,28 +956,52 @@ void MaccBase::macService(int fn)
 // so it seems like the wait functionality still has to be in the MAC.
 void *MacSwitch::macServiceLoop(void *arg)
 {
-	UMTS::Time mNextWriteTime;
 	while (1) {
-		// Roll forward to the next write opportunity.
-		//mNextWriteTime = gNodeB.clock().get()+1;
-		//gNodeB.clock().wait(mNextWriteTime);
+		// Wait for the next frame.  Use clock.wait() to sleep efficiently,
+		// but always sleep at least half a slot (~333us) to prevent a
+		// busy-loop when the system falls behind real-time.  Without the
+		// minimum sleep, if MAC service takes >10ms the wait() returns
+		// instantly (target already passed) and the loop burns 100% CPU.
 		int nowFN = gNodeB.clock().get().FN();
-
-		while (gNodeB.clock().get() <= UMTS::Time(nowFN,0)) {
-        		struct timespec howlong, rem;
-        		howlong.tv_sec = 0;
-			// Its not * 1024, its * 1000
-        		//howlong.tv_nsec = UMTS::gSlotMicroseconds << 10;
-        		howlong.tv_nsec = UMTS::gSlotMicroseconds * 1000/2;
-        		while (0 != nanosleep(&howlong, &rem)) { howlong = rem; }
+		UMTS::Time nextFrame(nowFN + 1, 0);
+		gNodeB.clock().wait(nextFrame);
+		{
+			struct timespec minSleep = {0, UMTS::gSlotMicroseconds * 500};
+			struct timespec rem;
+			while (0 != nanosleep(&minSleep, &rem)) { minSleep = rem; }
 		}
-		// Lock the list of mac entities and service each.
+		// Lock the list of mac entities, service each, and remove any
+		// that were flagged for deferred removal by macUnHookupDch.
+		// Doing removal+delete here (under mMacListLock) breaks the ABBA
+		// deadlock with the RRC thread.
+		//
+		// Note: the same MAC pointer can appear in mMacList multiple times
+		// (macFinishHookupDch is sometimes called without a matching
+		// macHookupDch on UE retries).  We must dedupe by removing ALL
+		// instances of a flagged pointer before deleting — otherwise the
+		// second instance would be a dangling pointer.
 		gMacSwitch.mMacListLock.lock();
-		MacEngine *mac;
-		RN_FOR_ALL(MacList_t,gMacSwitch.mMacList,mac) {
-			LOG(DEBUG) << "Service MAC " << mac << " at time " << gNodeB.clock().get();
-			mac->macService(nowFN);
-			LOG(DEBUG) << "Service MAC " << mac << " done at time " << gNodeB.clock().get();
+		{
+			MacList_t &ml = gMacSwitch.mMacList;
+			// Collect unique MAC pointers flagged for removal
+			std::set<MacEngine*> toDelete;
+			for (MacList_t::iterator it = ml.begin(); it != ml.end(); ++it) {
+				if ((*it)->mPendingRemove) toDelete.insert(*it);
+			}
+			// Remove all occurrences of each flagged MAC, then delete once
+			for (std::set<MacEngine*>::iterator dit = toDelete.begin();
+			     dit != toDelete.end(); ++dit) {
+				MacEngine *mac = *dit;
+				ml.remove(mac);   // removes ALL instances of this pointer
+				delete mac;
+			}
+			// Service remaining MACs
+			for (MacList_t::iterator it = ml.begin(); it != ml.end(); ++it) {
+				MacEngine *mac = *it;
+				LOG(DEBUG) << "Service MAC " << mac << " at time " << gNodeB.clock().get();
+				mac->macService(nowFN);
+				LOG(DEBUG) << "Service MAC " << mac << " done at time " << gNodeB.clock().get();
+			}
 		}
 		gMacSwitch.mMacListLock.unlock();
 	}

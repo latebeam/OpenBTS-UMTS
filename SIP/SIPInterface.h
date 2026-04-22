@@ -142,10 +142,12 @@ public:
 
 
 	/**
-		Create the SIP interface to watch for incoming SIP messages.
+		Create the SIP interface — does NOT open any socket.  The
+		configured SIP.Local.Port is bound by start().  Multiple
+		instances can coexist safely if SIP is never started.
 	*/
 	SIPInterface()
-		:mSIPSocket(gConfig.getNum("SIP.Local.Port"))
+		:mSIPSocket(UDPSocket::Deferred())  // no bind; open() happens in start()
 	{ }
 
 	
@@ -187,7 +189,7 @@ public:
 
 };
 
-void driveLoop(SIPInterface*);
+void* driveLoop(SIPInterface*);
 
 
 }; // namespace SIP.

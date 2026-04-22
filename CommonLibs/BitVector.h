@@ -654,6 +654,8 @@ class SoftVector: public Vector<float>, public MemCheckSoftVector {
 	SoftVector(SoftVector &src) : Vector<float>(src) {}
 	SoftVector(const SoftVector &src) : Vector<float>(src) {}
 
+	virtual ~SoftVector() {}
+
 
 	/**@name Casts and overrides of Vector operators. */
 	//@{

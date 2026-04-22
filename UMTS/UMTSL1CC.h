@@ -616,7 +616,7 @@ class L1CCTrChDownlink : public L1CCTrChInfo, public virtual L1CCBase
 	public:
 		L1CCTrChDownlink() {
 			memset(mEncoders,0,sizeof(mEncoders));
-			memset(mMultiplexerBuf,0,sizeof(mMultiplexerBuf));	// To catch bugs.
+			//memset(mMultiplexerBuf,0,sizeof(mMultiplexerBuf));	// To catch bugs.
 			DEBUGF("construct L1CCTrChDownlink\n");
 		}
 		void l1DownlinkOpen();

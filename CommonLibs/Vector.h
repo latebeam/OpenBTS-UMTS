@@ -90,7 +90,8 @@ template <class T> class Vector : public MemCheckVector {
 	void clone(const Vector<T>& other)
 	{
 		resize(other.size());
-		memcpy(mData,other.mStart,other.bytes());
+		//memcpy(mData,other.mStart,other.bytes());
+		std::copy(other.mStart, other.mStart + other.size(), mData);
 	}
 
 
@@ -124,8 +125,10 @@ template <class T> class Vector : public MemCheckVector {
 		:mData(NULL)
 	{
 		resize(other1.size()+other2.size());
-		memcpy(mStart, other1.mStart, other1.bytes());
-		memcpy(mStart+other1.size(), other2.mStart, other2.bytes());
+		//memcpy(mStart, other1.mStart, other1.bytes());
+		std::copy(other1.mStart, other1.mStart + other1.size(), mStart);
+		//memcpy(mStart+other1.size(), other2.mStart, other2.bytes());
+		std::copy(other2.mStart, other2.mStart + other2.size(), mStart + other1.size());
 	}
 
 	//@}
@@ -191,7 +194,8 @@ template <class T> class Vector : public MemCheckVector {
 		T* base = other.mStart + start;
 		assert(base+span<=other.mEnd);
 		assert(mStart+span<=mEnd);
-		memcpy(base,mStart,span*sizeof(T));
+		//memcpy(base,mStart,span*sizeof(T));
+		std::copy(mStart, mStart + span, base);
 	}
 
 	/** Copy all of this Vector to a segment of another Vector. */
@@ -210,7 +214,8 @@ template <class T> class Vector : public MemCheckVector {
 		const T* base = mStart + start;
 		assert(base+span<=mEnd);
 		assert(other.mStart+span<=other.mEnd);
-		memcpy(other.mStart,base,span*sizeof(T));
+		//memcpy(other.mStart,base,span*sizeof(T));
+		std::copy(base, base + span, other.mStart);
 	}
 
 	void fill(const T& val)

@@ -488,8 +488,8 @@ bool rad1_load_standard_bits (int nth, bool force,
 {
   rad1LoadStatus    s;
   const char            *filename;
-  const char            *proto_filename;
-  int hw_rev;
+  //const char            *proto_filename;
+  //int hw_rev;
 
   // start by loading the firmware
   s = rad1LoadFirmwareNth (nth, firmware_filename.data(), force, ctx);

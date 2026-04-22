@@ -28,9 +28,10 @@ Transceiver::Transceiver(int wBasePort,
                          const char *wTRXAddress,
                          UMTS::Time wTransmitLatency,
                          RadioInterface *wRadioInterface)
-  : mDataSocket(wBasePort + 2, wTRXAddress, wBasePort + 102),
-    mControlSocket(wBasePort + 1, wTRXAddress, wBasePort + 101),
-    mClockSocket(wBasePort, wTRXAddress, wBasePort + 100),
+  // Compact port layout — see TRXManager.cpp for details.
+  : mDataSocket(wBasePort + 4, wTRXAddress, wBasePort + 5),
+    mControlSocket(wBasePort + 2, wTRXAddress, wBasePort + 3),
+    mClockSocket(wBasePort + 0, wTRXAddress, wBasePort + 1),
     mTxServiceLoopThread(NULL), mRxServiceLoopThread(NULL),
     mTransmitPriorityQueueServiceLoopThread(NULL),
     mControlServiceLoopThread(NULL), mOn(false), mPower(DEFAULT_ATTEN),

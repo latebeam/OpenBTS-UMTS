@@ -58,7 +58,7 @@ unsigned char * FactoryCalibration::hex_string_to_binary(const char *string, int
 	return buf;
 }
 
-bool FactoryCalibration::i2c_write(int i2c_addr, char *hex_string)
+bool FactoryCalibration::i2c_write(int i2c_addr, const char *hex_string)
 {
 	int len = 0;
 	unsigned char *buf = hex_string_to_binary (hex_string, &len);
@@ -173,7 +173,7 @@ void FactoryCalibration::readEEPROM() {
 	*/
 	ret = i2c_write(0x50, "dfff");
 	sleep(1);
-//	std::cout << "i2c_write = " << ret << std::endl;
+	(void)ret; //	std::cout << "i2c_write = " << ret << std::endl;
 
 	/*
 	TEMP=$( ./RAD1Cmd i2c_read $SDR_ADDR 16 )

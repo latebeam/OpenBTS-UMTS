@@ -482,7 +482,8 @@ struct RBInfo : public URlcInfo, public PdcpInfo, public virtual RrcDefs
 	// 25.331 RRC 13.8: Default configuration 0 when using CELL_FACH.
 	// This is the RB part; the TrCh part goes in TrChConfig
 	void defaultConfig0CFRb(unsigned rbn);
-
+	// Added for 3 SRB on one TRCH
+	void defaultConfig3SRB(unsigned rbn);
 	// 25.331 RRC 13.7: Other Default configurations
 	void defaultConfig3Rb(unsigned rbn);
 };

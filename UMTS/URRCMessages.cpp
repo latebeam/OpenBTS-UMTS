@@ -15,6 +15,7 @@
 #include "UMTSTransfer.h"
 #include "URRCMessages.h"
 #include "MACEngine.h"
+#include "UMTSL1FEC.h"
 #include "AsnHelper.h"
 #include "Logger.h"
 #include "SgsnExport.h"
@@ -193,13 +194,13 @@ static bool encodeDcchMsg(UEInfo *uep, RbId rbid, ASN::DL_DCCH_Message_t *msg, B
 	// Encode the message (again), completely oblivious to cpu cycles consumed.
 	if (!uperEncodeToBV(&ASN::asn_DEF_DL_DCCH_Message,msg,result,descr)) {return false;}
 
-	std::string comment = format("DL_DCCH %s message size=%d",descr.c_str(),result.size());
+	std::string comment = format("DL_DCCH %s message size=%lu",descr.c_str(),result.size());
 	asnLogMsg(rbid, &ASN::asn_DEF_DL_DCCH_Message, msg,comment.c_str(),uep);
 
 	//if (gConfig.getNum("UMTS.Debug.Messages")) {
 	//	asn_fprint(stdout,&ASN::asn_DEF_DL_DCCH_Message, msg);
 	//	std::string readable = asn2string(&ASN::asn_DEF_DL_DCCH_Message, msg);
-	//	fprintf(stdout,"Encoded message size=%d bytes\n%s",result.size());
+	//	fprintf(stdout,"Encoded message size=%u bytes\n%s",result.size());
 	//	fflush(stdout);
 	//}
 	return true;
@@ -215,7 +216,7 @@ static bool encodeCcchMsg(ASN::DL_CCCH_Message_t *msg, ByteVector &result,
 	// We can just return: uperEncodeToBV printed a message on failure.
 	bool stat = uperEncodeToBV(&ASN::asn_DEF_DL_CCCH_Message,msg,result,descr);
 	if (stat) {
-		string comment = format("DL_CCCH %s message size=%d",descr.c_str(),result.size());
+		string comment = format("DL_CCCH %s message size=%lu",descr.c_str(),result.size());
 		asnLogMsg(0, &ASN::asn_DEF_DL_CCCH_Message, msg,comment.c_str(),uep,urnti);
 	}
 	//if (gConfig.getNum("UMTS.Debug.Messages")) {
@@ -400,6 +401,61 @@ static ASN::UL_CommonTransChInfo *toAsnUL_CommonTransChInfo(RrcMasterChConfig *m
 	return result;
 }
 
+#if 0
+static ASN::UL_CommonTransChInfo_r4 *toAsnUL_CommonTransChInfo_r4(RrcMasterChConfig *masterConfig)
+{
+	ASN::UL_CommonTransChInfo_r4 *result = RN_CALLOC(ASN::UL_CommonTransChInfo_r4);
+	// struct TFC_Subset   *tfc_Subset /* OPTIONAL */;
+	// struct TFCS *prach_TFCS /* OPTIONAL */;
+	// struct UL_CommonTransChInfo__modeSpecificInfo {...} modeSpecificInfo;
+	// The whole modeSpecificInfo is optional, even though it is not marked as such in ASN.
+	typedef ASN::UL_CommonTransChInfo_r4::UL_CommonTransChInfo_r4__modeSpecificInfo msi;
+	result->modeSpecificInfo = RN_CALLOC(msi);
+	result->modeSpecificInfo->present = ASN::UL_CommonTransChInfo_r4__modeSpecificInfo_PR_fdd;
+
+	masterConfig->getUlTfcs()->toAsnTfcs(&result->modeSpecificInfo->choice.fdd.ul_TFCS,TrChUlDCHType);
+	return result;
+}
+#endif
+
+/*
+modeSpecificInfo
+					  fdd
+						dl-Parameters
+						  dl-Parameters    : sameAsUL
+*/
+
+static ASN::DL_CommonTransChInfo *toAsnDL_CommonTransChInfoSameAsUL(RrcMasterChConfig *masterConfig)
+{
+	ASN::DL_CommonTransChInfo *result = RN_CALLOC(ASN::DL_CommonTransChInfo);
+	result->modeSpecificInfo.present = ASN::DL_CommonTransChInfo__modeSpecificInfo_PR_fdd;
+	typedef ASN::DL_CommonTransChInfo::
+		DL_CommonTransChInfo__modeSpecificInfo::
+		DL_CommonTransChInfo__modeSpecificInfo_u::
+		DL_CommonTransChInfo__modeSpecificInfo__fdd::
+		DL_CommonTransChInfo__modeSpecificInfo__fdd__dl_Parameters longthing;
+	result->modeSpecificInfo.choice.fdd.dl_Parameters = RN_CALLOC(longthing);
+	result->modeSpecificInfo.choice.fdd.dl_Parameters->present =
+		ASN::DL_CommonTransChInfo__modeSpecificInfo__fdd__dl_Parameters_PR_sameAsUL;
+	return result;
+}
+
+#if 0
+static ASN::DL_CommonTransChInfo_r4 *toAsnDL_CommonTransChInfoSameAsUL_r4(RrcMasterChConfig *masterConfig)
+{
+	ASN::DL_CommonTransChInfo_r4 *result = RN_CALLOC(ASN::DL_CommonTransChInfo_r4);
+	result->modeSpecificInfo->present = ASN::DL_CommonTransChInfo_r4__modeSpecificInfo_PR_fdd;
+	typedef ASN::DL_CommonTransChInfo_r4::
+		DL_CommonTransChInfo_r4__modeSpecificInfo::
+		DL_CommonTransChInfo_r4__modeSpecificInfo_u::
+		DL_CommonTransChInfo_r4__modeSpecificInfo__fdd::
+		DL_CommonTransChInfo_r4__modeSpecificInfo__fdd__dl_Parameters longthing;
+	result->modeSpecificInfo->choice.fdd.dl_Parameters = RN_CALLOC(longthing);
+	result->modeSpecificInfo->choice.fdd.dl_Parameters->present =
+		ASN::DL_CommonTransChInfo_r4__modeSpecificInfo__fdd__dl_Parameters_PR_sameAsUL;
+	return result;
+}
+#endif
 
 static ASN::DL_CommonTransChInfo *toAsnDL_CommonTransChInfo(RrcMasterChConfig *masterConfig)
 {
@@ -429,7 +485,6 @@ static ASN::DL_CommonTransChInfo *toAsnDL_CommonTransChInfo(RrcMasterChConfig *m
 	return result;
 }
 
-
 ASN::UL_AddReconfTransChInfoList *toAsnUL_AddReconfTransChInfoList(RrcMasterChConfig *masterConfig)
 {
 	ASN::UL_AddReconfTransChInfoList *result = RN_CALLOC(ASN::UL_AddReconfTransChInfoList);
@@ -450,6 +505,42 @@ ASN::UL_AddReconfTransChInfoList *toAsnUL_AddReconfTransChInfoList(RrcMasterChCo
 		ASN_SEQUENCE_ADD(&result->list,addTcIE);
 	}
 	return result;
+}
+
+static void toAsn_AddReconfTransChInfoList_r3(RrcMasterChConfig *masterConfig, ASN::UL_AddReconfTransChInfoList *ulchlist)
+{
+	unsigned numtc = masterConfig->getUlNumTrCh();
+	for (TrChId tcid = 0; tcid < numtc; tcid++) {
+		LOG(NOTICE) << "tcid=" << tcid;
+		ASN::UL_AddReconfTransChInformation *addTcIE =
+			RN_CALLOC(ASN::UL_AddReconfTransChInformation);
+		// UL_TrCH_Type_t   ul_TransportChannelType;	// dch or usch.
+		asn_long2INTEGER(&addTcIE->ul_TransportChannelType,ASN::UL_TrCH_Type_dch);
+		// TransportChannelIdentity_t   transportChannelIdentity;
+		addTcIE->transportChannelIdentity = tcid+1;	// ASN TrCh starts at 1
+		// TransportFormatSet_t     transportFormatSet;
+		masterConfig->getUlTfs()->toAsnTfs(&addTcIE->transportFormatSet);
+
+		ASN_SEQUENCE_ADD(&ulchlist->list,addTcIE);
+	}
+}
+
+static void toAsnDL_AddReconfTransChInfoList_r3(RrcMasterChConfig *masterConfig, ASN::DL_AddReconfTransChInfoList *dlchlist)
+{
+	unsigned numtc = masterConfig->getDlNumTrCh();
+	for (TrChId tcid = 0; tcid < numtc; tcid++) {
+		LOG(NOTICE) << "tcid=" << tcid;
+		ASN::DL_AddReconfTransChInformation *addTcIE =
+			RN_CALLOC(ASN::DL_AddReconfTransChInformation);
+		// DL_TrCH_Type_t   dl_TransportChannelType;	// dch or usch.
+		asn_long2INTEGER(&addTcIE->dl_TransportChannelType,ASN::DL_TrCH_Type_dch);
+		// TransportChannelIdentity_t   dl_transportChannelIdentity;
+		addTcIE->dl_transportChannelIdentity = tcid+1;	// ASN TrCh starts at 1
+		addTcIE->tfs_SignallingMode.present = ASN::DL_AddReconfTransChInformation__tfs_SignallingMode_PR_explicit_config;
+		masterConfig->getDlTfs()->toAsnTfs(&addTcIE->tfs_SignallingMode.choice.explicit_config, true);
+
+		ASN_SEQUENCE_ADD(&dlchlist->list,addTcIE);
+	}
 }
 
 // Create a fake uplink TrCh, needed just to align an ASN struct.
@@ -519,6 +610,24 @@ void toAsnDL_AddReconfTransChInfoListSameAsUl(
 {
 	ASN::DL_AddReconfTransChInformation *dummyDlDCH =
 		RN_CALLOC(ASN::DL_AddReconfTransChInformation); 
+	asn_long2INTEGER(&dummyDlDCH->dl_TransportChannelType,ASN::DL_TrCH_Type_dch);
+	dummyDlDCH->dl_transportChannelIdentity = dltcid;
+
+	// Since this is just a dummy structure, use the simplest type,which is sameAsUlTrCh.
+	dummyDlDCH->tfs_SignallingMode.present = ASN::DL_AddReconfTransChInformation__tfs_SignallingMode_PR_sameAsULTrCH;
+	asn_long2INTEGER(&dummyDlDCH->tfs_SignallingMode.choice.sameAsULTrCH.ul_TransportChannelType,
+				ASN::UL_TrCH_Type_dch);
+	dummyDlDCH->tfs_SignallingMode.choice.sameAsULTrCH.ul_TransportChannelIdentity = ultcid;
+	ASN_SEQUENCE_ADD(&dlchlist->list,dummyDlDCH);
+}
+
+void toAsnDL_AddReconfTransChInfoListSameAsUl_r4(
+	ASN::DL_AddReconfTransChInfoList_r4 *dlchlist,
+	int dltcid,		// Downlink 1-based TrCh-id to configure
+	int ultcid)		// Uplink 1-based TrCh-id to copy to downlink trch.
+{
+	ASN::DL_AddReconfTransChInformation *dummyDlDCH =
+		RN_CALLOC(ASN::DL_AddReconfTransChInformation);
 	asn_long2INTEGER(&dummyDlDCH->dl_TransportChannelType,ASN::DL_TrCH_Type_dch);
 	dummyDlDCH->dl_transportChannelIdentity = dltcid;
 
@@ -741,7 +850,7 @@ void sendRrcConnectionSetup(UEInfo *uep, ASN::InitialUE_Identity *ueInitialId)
 
 		// UTRAN_DRX_CycleLengthCoefficient_t   utran_DRX_CycleLengthCoeff;
 		// 10.3.3.49: DRC mode.  "Refers to 'k' in the formula 25.304 Discontinous Reception".
-		iep->utran_DRX_CycleLengthCoeff = 3;	// Must be in range 3..9
+		iep->utran_DRX_CycleLengthCoeff = 7;	// Must be in range 3..9
 		// skip optional CapabilityUpdateRequirement
 
 		// struct CapabilityUpdateRequirement  *capabilityUpdateRequirement    /* OPTIONAL */;
@@ -809,6 +918,244 @@ void sendRrcConnectionSetup(UEInfo *uep, ASN::InitialUE_Identity *ueInitialId)
 	gMacSwitch.writeHighSideCcch(result,descrRrcConnectionSetup);
 }
 
+// Builds DCCH with 3 SRBs
+// UE to CELL DCH
+void sendRrcConnectionSetupDCH(UEInfo *uep, ASN::InitialUE_Identity *ueInitialId)
+{
+	// 	macHookupDch(dch,uep);	// Allocates the corresponding Mac-D.
+	ASN::DL_CCCH_Message msg;
+	memset(&msg, 0, sizeof(msg));
+	msg.message.present = ASN::DL_CCCH_MessageType_PR_rrcConnectionSetup;
+	ASN::RRCConnectionSetup *csp = &msg.message.choice.rrcConnectionSetup;
+	unsigned transactionId = uep->newTransactionId();
+	ByteVector result(1000);
+
+#define REL3_RRC 1
+	// struct RRCConnectionSetup_r3_IEs
+#if REL3_RRC
+	// Version 3 of this message.
+	LOG(INFO) << uep << ": Version 3";
+	csp->present = ASN::RRCConnectionSetup_PR_r3; // Guessing we can use any of the variants.
+	ASN::RRCConnectionSetup_r3_IEs_t *iep = &csp->choice.r3.rrcConnectionSetup_r3;
+	// InitialUE_Identity_t     initialUE_Identity;
+	iep->initialUE_Identity = *ueInitialId;
+
+	// RRC_TransactionIdentifier_t  rrc_TransactionIdentifier;
+	iep->rrc_TransactionIdentifier = transactionId;
+#else // REL3_RRC
+	LOG(INFO) << uep << ": Version 4";
+#if 0
+	ASN::RRCConnectionSetup::RRCConnectionSetup_u::RRCConnectionSetup__later_than_r3 *iep =	&csp->choice.later_than_r3;
+	//iep->initialUE_Identity = *ueInitialId;
+	//iep->rrc_TransactionIdentifier = transactionId;
+	typedef ASN::RRCConnectionSetup::RRCConnectionSetup_u::RRCConnectionSetup__later_than_r3 later_than_r3_t;
+	ASN::RRCConnectionSetup::RRCConnectionSetup_u::RRCConnectionSetup__later_than_r3::RRCConnectionSetup__later_than_r3__criticalExtensions *extp = &iep->criticalExtensions;
+#endif
+
+	csp->present = ASN::RRCConnectionSetup_PR_later_than_r3;
+	ASN::RRCConnectionSetup_r4_IEs_t *ie4 = &csp->choice.later_than_r3.criticalExtensions.choice.r4.rrcConnectionSetup_r4;
+	// ASN::RRCConnectionSetup_r4_IEs_t *ie4 = &csp->choice.later_than_r3.criticalExtensions.choice.criticalExtensions.choice.
+
+	csp->choice.later_than_r3.initialUE_Identity = *ueInitialId;
+	csp->choice.later_than_r3.rrc_TransactionIdentifier = transactionId;
+#endif // REL3_RRC
+
+	// RNTIs
+#if REL3_RRC
+	toAsnURNTI(&iep->new_U_RNTI, 1, uep->getSRNTI());
+#else // REL3_RRC
+	// toAsnURNTI(&ie4->new_U_RNTI,uep->getSrncId(),uep->getSRNTI());
+	toAsnURNTI(&ie4->new_U_RNTI, 1, uep->getSRNTI());
+	// ie4->new_c_RNTI = toAsnCRNTI(uep->mCRNTI);
+#endif // REL3_RRC
+
+	// TODO: check if these are needed or not!!!
+
+	// setAsnBIT_STRING(&iep->new_U_RNTI.srnc_Identity,(uint8_t*)calloc(1,2),12);
+	// AsnBitString2BVTemp(iep->new_U_RNTI.srnc_Identity).setField(0,uep->getSrncId(),12);
+	// setAsnBIT_STRING(&iep->new_U_RNTI.s_RNTI,(uint8_t*)calloc(1,3),20);
+	// AsnBitString2BVTemp(iep->new_U_RNTI.s_RNTI).setField(0,uep->getSRNTI(),20);
+
+	// srnti = 0x12345;
+	// ByteVector tst(3);
+	// tst.setField(0,srnti,20);
+	// printf("SRNTI=0x%x bv=%s\n",srnti,tst.hexstr().c_str());
+
+	// C_RNTI_t    *new_c_RNTI /* OPTIONAL */;
+	// C-RNTI
+	// iep->new_c_RNTI = toAsnCRNTI(uep->mCRNTI);
+	// iep->new_c_RNTI = RN_CALLOC(ASN::C_RNTI_t);
+	// new_c_RNTI is a BIT_STRING_t
+	// setAsnBIT_STRING(iep->new_c_RNTI,(uint8_t*)calloc(1,2),16);
+	// AsnBitString2BVTemp(iep->new_c_RNTI).setField(0,uep->mCRNTI,16);
+
+	// RRC_StateIndicator_t     rrc_StateIndicator;
+#if REL3_RRC
+	asn_long2INTEGER(&iep->rrc_StateIndicator, ASN::RRC_StateIndicator_cell_DCH);
+	// UTRAN_DRX_CycleLengthCoefficient_t   utran_DRX_CycleLengthCoeff;
+	// 10.3.3.49: DRC mode.  "Refers to 'k' in the formula 25.304 Discontinous Reception".
+	iep->utran_DRX_CycleLengthCoeff = 7; // Must be in range 3..9
+
+	// struct CapabilityUpdateRequirement  *capabilityUpdateRequirement    /* OPTIONAL */;
+	iep->capabilityUpdateRequirement = RN_CALLOC(ASN::CapabilityUpdateRequirement);
+	iep->capabilityUpdateRequirement->ue_RadioCapabilityFDDUpdateRequirement = true;
+	iep->capabilityUpdateRequirement->ue_RadioCapabilityTDDUpdateRequirement = false;
+#else // REL3_RRC
+	asn_long2INTEGER(&ie4->rrc_StateIndicator, ASN::RRC_StateIndicator_cell_DCH);
+	ie4->utran_DRX_CycleLengthCoeff = 7; // Must be in range 3..9
+	ie4->capabilityUpdateRequirement = RN_CALLOC(ASN::CapabilityUpdateRequirement_r4);
+	ie4->capabilityUpdateRequirement->ue_RadioCapabilityFDDUpdateRequirement_FDD = true;
+	ie4->capabilityUpdateRequirement->ue_RadioCapabilityTDDUpdateRequirement_TDD128 = false;
+	ie4->capabilityUpdateRequirement->ue_RadioCapabilityTDDUpdateRequirement_TDD384 = false;
+#endif // REL3_RRC
+
+	RrcMasterChConfig *newConfig = &uep->mUeDchConfig;
+	DCHFEC *dch = uep->mUeDch;
+	if (dch == NULL)
+	{
+		LOG(NOTICE) << uep << ": DCH NULL";
+		dch = gChannelTree.chChooseBySF(128); //dch = gChannelTree.chChooseBySF(256);
+		LOG(NOTICE) << "DCH DL SP = " << dch->getSpCode()
+					<< ", DL SF = " << dch->getDlSF()
+					<< ", UL SRC = " << dch->getSrCode()
+					<< ", UL SF = " << dch->getUlSF();
+
+		// Create SRBs
+		if ((newConfig->getUlNumTrCh() == 0) && (newConfig->getDlNumTrCh() == 0))
+		{
+			LOG(NOTICE) << uep << ": Configuring SRBs";
+			newConfig->rrcConfigDchCSSRB();
+		}
+		else
+		{
+			LOG(NOTICE) << uep << ": SRBs already configured";
+		}
+
+		LOG(NOTICE) << uep << ": fecConfig";
+		dch->fecConfig(newConfig->mTrCh);
+
+		LOG(NOTICE) << uep << ": ueConnectRlc";
+		uep->ueConnectRlc(newConfig, stCELL_DCH);
+
+		LOG(NOTICE) << uep << ": macHookUp";
+		macHookupDch(dch, uep);
+	}
+	else
+	{
+		LOG(NOTICE) << uep << ": DCH Exists";
+		// macFinishHookupDch below may still be called.  MacSwitch::addMac
+		// is now idempotent so it won't create a duplicate entry in mMacList.
+	}
+
+#if REL3_RRC
+	// 3GPP 25.331 10.3.4.24
+	// iep->srb_InformationSetupList = RN_CALLOC(ASN::SRB_InformationSetupList2_t);
+	// toAsnSRB_InformationSetupList(masterConfig,&rbs.srb_InformationSetupList->list);
+	toAsnSRB_InformationSetupList(newConfig, &iep->srb_InformationSetupList.list);
+
+	iep->ul_CommonTransChInfo = toAsnUL_CommonTransChInfo(newConfig);
+	iep->dl_CommonTransChInfo = toAsnDL_CommonTransChInfoSameAsUL(newConfig);
+#else // REL3_RRC
+	toAsnSRB_InformationSetupList(newConfig, &ie4->srb_InformationSetupList.list);
+
+	ie4->ul_CommonTransChInfo = toAsnUL_CommonTransChInfo_r4(newConfig);
+	ie4->dl_CommonTransChInfo = toAsnDL_CommonTransChInfoSameAsUL_r4(newConfig);
+
+#endif // REL3_RRC
+	// struct UL_CommonTransChInfo *ul_CommonTransChInfo   /* OPTIONAL */;
+	// struct DL_CommonInformation *dl_CommonInformation   /* OPTIONAL */;
+	// UL_AddReconfTransChInfoList_t    ul_AddReconfTransChInfoList;
+	// DL_AddReconfTransChInfoList_t    dl_AddReconfTransChInfoList;
+
+	// All the TrCh info is optional, and not used in our case because we are
+	// defining RACH/FACH rather than DCH, BUT...
+	// For ul_ and dl_AddReconfTransChInfoList we are required to put in something anyway,
+	// and 8.1.3.4 recommends a single zero-sized TF.
+	// You can not use the "NOTHING" option - the ASN compiler just uses
+	// that to mark an uninitialized value and fails.
+
+#if REL3_RRC
+	toAsn_AddReconfTransChInfoList_r3(newConfig, &iep->ul_AddReconfTransChInfoList);
+	// toAsnUL_AddReconfTransChInfoList(newConfig);
+	// ie4->ul_AddReconfTransChInfoList = toAsnUL_AddReconfTransChInfoList(newConfig);
+	// iep->ul_AddReconfTransChInfoList = toAsnUL_AddReconfTransChInfoList(newConfig);
+	//toAsnDL_AddReconfTransChInfoListSameAsUl(&iep->dl_AddReconfTransChInfoList, 1, 1);
+	toAsnDL_AddReconfTransChInfoList_r3(newConfig, &iep->dl_AddReconfTransChInfoList);
+#else // REL3_RRC
+	toAsn_AddReconfTransChInfoList_r3(newConfig, ie4->ul_AddReconfTransChInfoList); // Same in r3
+	toAsnDL_AddReconfTransChInfoListSameAsUl_r4(ie4->dl_AddReconfTransChInfoList, 1, 1);
+#endif // REL3_RRC
+#if REL3_RRC
+	// These IEs are all skipped, needed only for DCH:
+	//struct UL_ChannelRequirement *ul_ChannelRequirement /* OPTIONAL */;
+	//struct DL_InformationPerRL_List *dl_InformationPerRL_List /* OPTIONAL */;
+
+	PhCh *phch = dch;
+	iep->ul_ChannelRequirement = phch->toAsnUL_ChannelRequirement();
+	iep->dl_CommonInformation = phch->toAsnDL_CommonInformation();
+	iep->dl_InformationPerRL_List = phch->toAsnDL_InformationPerRL_List();
+	ASN::DL_InformationPerRL_List *result2 = RN_CALLOC(ASN::DL_InformationPerRL_List);
+
+	ASN::DL_InformationPerRL *one = RN_CALLOC(ASN::DL_InformationPerRL);
+	one->modeSpecificInfo.present = ASN::DL_InformationPerRL__modeSpecificInfo_PR_fdd;
+	int primarySC = gConfig.getNum("UMTS.Downlink.ScramblingCode");
+	one->modeSpecificInfo.choice.fdd.primaryCPICH_Info.primaryScramblingCode = primarySC;
+	// one->modeSpecificInfo.choice.fdd.
+
+	one->dl_DPCH_InfoPerRL = phch->toAsnDL_DPCH_InfoPerRL();
+	ASN_SEQUENCE_ADD(&result2->list, one);
+	iep->dl_InformationPerRL_List = result2;
+#else  // REL3_RRC
+	PhCh *phch = dch;
+	// UL
+	ie4->ul_ChannelRequirement = phch->toAsnUL_ChannelRequirement_r4();
+	ie4->dl_CommonInformation = phch->toAsnDL_CommonInformation_r4();
+	ie4->dl_InformationPerRL_List = phch->toAsnDL_InformationPerRL_List_r4();
+	ASN::DL_InformationPerRL_List_r4 *result2 = RN_CALLOC(ASN::DL_InformationPerRL_List_r4);
+
+	ASN::DL_InformationPerRL_r4 *one = RN_CALLOC(ASN::DL_InformationPerRL_r4);
+	one->modeSpecificInfo.present = ASN::DL_InformationPerRL_r4__modeSpecificInfo_PR_fdd;
+	int primarySC = gConfig.getNum("UMTS.Downlink.ScramblingCode");
+	one->modeSpecificInfo.choice.fdd.primaryCPICH_Info.primaryScramblingCode = primarySC;
+	// one->modeSpecificInfo.choice.fdd.
+
+	one->dl_DPCH_InfoPerRL = phch->toAsnDL_DPCH_InfoPerRL_r4();
+	ASN_SEQUENCE_ADD(&result2->list, one);
+	ie4->dl_InformationPerRL_List = result2;
+#endif // REL3_RRC
+
+	// struct FrequencyInfo    *frequencyInfo  /* OPTIONAL */;
+
+	// TODO: Do we need this?
+	// MaxAllowedUL_TX_Power_t *maxAllowedUL_TX_Power  /* OPTIONAL */;
+
+#if REL3_RRC
+	if (!encodeCcchMsg(&msg, result, descrRrcConnectionSetup, uep, 0))
+	{
+		return;
+	}
+
+	// Zero out the initialUE_Identity that we copied above so that there
+	// is only one copy of it and we dont try to free it twice.
+	memset(&iep->initialUE_Identity, 0, sizeof(ASN::InitialUE_Identity_t));
+#else // REL3_RRC
+	if (!encodeCcchMsg(&msg, result, descrRrcConnectionSetup, uep, 0))
+	{
+		return;
+	}
+	// memset(&ie4->in)
+#endif // REL3_RRC
+
+	LOG(NOTICE) << uep << ": DL-CCCH: RRC Connection Setup: " << result;
+
+	// TODO: This crashes
+	// ASN_STRUCT_FREE_CONTENTS_ONLY(ASN::asn_DEF_DL_CCCH_Message,&msg);
+
+	UeTransaction(uep, UeTransaction::ttRrcConnectionSetup, 0, transactionId, stCELL_DCH);
+	gMacSwitch.writeHighSideCcch(result, descrRrcConnectionSetup);
+	macFinishHookupDch(uep);
+}
+
 // Sent when an unrecognized UE tries to talk to us.
 // Tell it to release the connection and start over.
 void sendRrcConnectionReleaseCcch(int32_t urnti)
@@ -846,6 +1193,7 @@ void sendRrcConnectionReject(UEInfo *uep) //, ASN::InitialUE_Identity *ueInitial
 	m2->initialUE_Identity = asnUeId.UeInitialId();
 	
 	m2->rejectionCause = toAsnEnumerated(ASN::RejectionCause_congestion);
+	m2->waitTime = 2;  // seconds (range 1..16) — UE waits before retrying
 
 	ByteVector result(1000);
 	if (!encodeCcchMsg(&msg,result,descrRrcConnectionReject,NULL,uep->mURNTI)) {return;}
@@ -885,12 +1233,15 @@ void sendRrcConnectionRelease(UEInfo *uep) //, ASN::InitialUE_Identity *ueInitia
 	// struct Rplmn_Information    *rplmn_information  /* OPTIONAL */;
 
 	ByteVector result(1000);
-	if (!encodeDcchMsg(uep,SRB2,&msg,result,descrRrcConnectionRelease)) {return;}
+	if (!encodeDcchMsg(uep,SRB1,&msg,result,descrRrcConnectionRelease)) {return;}
 
 	// Prepare to receive the reply to this message:
 	UeTransaction(uep,UeTransaction::ttRrcConnectionRelease,0,transactionId,stIdleMode);
 
-	uep->ueWriteHighSide(SRB2, result, descrRrcConnectionRelease);
+	uep->ueWriteHighSide(SRB1, result, descrRrcConnectionRelease);
+
+	// Stop RTT measurement if it has been started
+	uep->stopRttMeasurement();
 }
 
 // 3GPP 25.331 10.2.33
@@ -1574,15 +1925,12 @@ void handleRrcConnectionRequest(BitVector &tb, ASN::RRCConnectionRequest_t *msg)
 	// and whichever URNTI the UE decides to use will be fine with us, but I think
 	// that confuses the UE sometimes.
 
-	LOG(INFO) << "Request";
 	AsnUeId asnUeId(msg->initialUE_Identity);
-
-	LOG(INFO) << "asnUeId size = " << sizeof(asnUeId);
 
 	const char *comment = "UL_CCCH_MessageType_PR_rrcConnectionRequest";
 	UEInfo *uep = gRrc.findUeByAsnId(&asnUeId);
-	if (uep == NULL) {
-		// Allocates RNTIs
+	bool isNew = (uep == NULL);
+	if (isNew) {
 		uep = new UEInfo(&asnUeId);
 		comment = "UL_CCCH_MessageType_PR_rrcConnectionRequest (new UE)";
 	}
@@ -1596,7 +1944,50 @@ void handleRrcConnectionRequest(BitVector &tb, ASN::RRCConnectionRequest_t *msg)
 	// which gets wrapped in an RRC direct transfer, which must not be integrity protected.
 	uep->integrity.integrityStop();	// Redudant with code in ueSetState, but make sure.
 
-	
+	// Clean up orphan DCH from a previous failed connection attempt.
+	// Same 3s blanket timeout as purgeUEs — T300 retransmit is 1-2s, so
+	// after 3s the UE isn't going to succeed on the existing DCH.
+	if (!isNew && uep->mUeDch != NULL &&
+	    uep->ueGetState() == stIdleMode &&
+	    uep->mUeDch->mOpenTime.elapsed() > 3000) {
+		LOG(NOTICE) << "Cleaning up phantom DCH for existing UE=" << uep->ueid()
+		           << " (open " << uep->mUeDch->mOpenTime.elapsed() << "ms)";
+		macUnHookupDch(uep);
+	}
+
+	// Cap simultaneous DCH channels to prevent CPU overload.  When at
+	// capacity, send RRC Connection Reject (congestion) with waitTime=2s
+	// so the UE hears the reject, resets its RACH power ramp, and backs
+	// off before retrying.
+	{
+		bool atCapacity;
+		{
+			ScopedLock lock(gActiveDCH.mLock);
+			static const int MAX_ACTIVE_DCH = 6;
+			atCapacity = ((int)gActiveDCH.size() >= MAX_ACTIVE_DCH);
+			if (atCapacity) {
+				LOG(NOTICE) << "RRC Connection REJECTED (congestion): " << gActiveDCH.size()
+				           << " DCH active (max " << MAX_ACTIVE_DCH
+				           << "), UE=" << uep->ueid();
+			}
+		}
+		if (atCapacity) {
+			// Free this UE's own DCH if it holds one — no point reserving
+			// a slot for a UE we're about to reject.  The rejected UE
+			// will retry after its T300 timer and get a fresh allocation
+			// if a slot is available then.  Must release the lock above
+			// before calling macUnHookupDch (which takes other locks).
+			if (uep->mUeDch != NULL) {
+				LOG(NOTICE) << "Also releasing rejected UE's DCH to free capacity, UE="
+				           << uep->ueid();
+				macUnHookupDch(uep);
+			}
+			sendRrcConnectionReject(uep);
+			// Don't delete uep — purgeUEs handles cleanup via inactivity timer.
+			return;
+		}
+	}
+
 	// Send the RRC Connection Setup Message,
 	// using the exact initialUE_Identity the UE provided, whatever it is.
 	if (gRANControl.enabled())
@@ -1611,10 +2002,9 @@ void handleRrcConnectionRequest(BitVector &tb, ASN::RRCConnectionRequest_t *msg)
 
 void continueRrcConnectionSetup(UEInfo *uep)
 {
-	LOG(INFO) << "Continue connection setup";
+	LOG(INFO) << uep << ": Continue connection setup";
 	AsnUeId asnUeId = uep->mUid;
-	sendRrcConnectionSetup(uep,&asnUeId.UeInitialId());
-
+	sendRrcConnectionSetupDCH(uep,&asnUeId.UeInitialId());
 }
 
 #if 0	// Probably works, but not used, so take out to shut up compiler.
@@ -1782,7 +2172,7 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
 	UEInfo *uep = this;
 	//bool verbose = gConfig.getNum("UMTS.Debug.Messages"); // redundant with asnLogMsg.
 	//if (verbose) { fprintf(stdout,"Received DCCH message for %s rb=%d\n",uep->ueid().c_str(),rbNum); }
-	LOG(INFO) << "DCCH ByteVector: " << bv;
+	LOG(INFO) << this << " rbNum: " << rbNum << " DCCH ByteVector: " << bv;
 	ASN::UL_DCCH_Message *msg1 = (ASN::UL_DCCH_Message*)uperDecodeFromByteV(&ASN::asn_DEF_UL_DCCH_Message, bv);
 	if (!msg1) return;
 
@@ -1802,7 +2192,6 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
 		}
 		// This message should arrive on SRB1 to indicate initial RRC connection is set up.
 		// If you get this far, you have succeeded in establishing an RRC connection.
-		LOG(NOTICE) << "Received RRC Connection Setup Complete!  Congratulations!";
 
 		// The fact of the message arriving is the major piece of information.
 		// Message also contains START info and UE Radio Access Capability Info.
@@ -1931,6 +2320,7 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
 		break;
 	}
 	case ASN::UL_DCCH_MessageType_PR_signallingConnectionReleaseIndication: {
+
 		// The UE sends this to tell us it wants to drop the connection.
 		// FIXME: Or does it send this to tell us it already dropped the connection?  In which case
 		// we dont need to send the RrcConnectionRelease message.
@@ -1938,32 +2328,41 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
  		//           SCRI->RRC Conn. Release
 		//           When UE wants to reconnect... RRC Conn. Setup->Service Request procedure	
 		UeTransaction *lastTrans = getLastTransaction();
-		if (lastTrans->mTransactionType != ttComplete && lastTrans->elapsed()<1000) {
+#if 0
+		if (lastTrans && (lastTrans->mTransactionType != ttComplete) && (lastTrans->elapsed() < 1000)) {
 			// There is some current transaction happening.
 			// Lets wait a while to see what happens.
+			LOG(ERR) << "Received SignallingConnectionReleaseIndication message"
+				<< " for ue when there is some recent transaction happening -> waiting completion.. " << uep;
+			gRANControl.rrcUplinkMessageInd(uep,bv,rbNum);
 			return;
 		}
+#endif
 		switch (uep->ueGetState()) {
 		case stIdleMode:
 			// This is not possible.
 			LOG(ERR) << "Received SignallingConnectionReleaseIndication message"
-				<<" for ue inIdleMode"<<uep;
+				<< " for ue in idle mode " << uep;
 			break;
 		case stCELL_DCH:
+			LOG(NOTICE) << "Received SignallingConnectionReleaseIndication message"
+				<< " for ue in DCH mode " << uep;
+
 			// The SGSN will call back to rrc to send a RadioBearerRelease message,
 			// which should cause the UE to send RadioBearerReleaseComplete/Failure,
 			// which will kick the UE down to CELL_FACH state.
 			// Harvind (3-17-13) See above.  UE barfs when we send RadioBearerRelease.
-			uep->ueSetState(stCELL_DCH);
-			if (lastTrans->mTransactionType == ttRadioBearerRelease &&
-				lastTrans->elapsed()<1000) {
+			//uep->ueSetState(stCELL_DCH);
+			if (lastTrans &&
+				(lastTrans->mTransactionType == ttRadioBearerRelease) &&
+				(lastTrans->elapsed() < 1000)) {
 				// Hmm.  Its not working.  Not sure what to do.  Try harder.
 				sendRrcConnectionRelease(uep);
 			} else {
 				// Harvind (3-17-13) See above.  Keep PDP context intact for smoother operation.
 				//printf("Freeing all PDP contexts.");
 				//uep->sgsnFreePdpAll(mURNTI);
-                sendRrcConnectionRelease(uep);
+				sendRrcConnectionRelease(uep);
 			}
 			break;
 		default:

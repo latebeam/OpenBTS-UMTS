@@ -1003,22 +1003,21 @@ void L1CCTrChDownlink::l1SendFrame2(BitVector& frame, unsigned tfci)
 				// There is no data2 for SCCPCH.
 				break;
 			case DPDCHType:
-				// The DCH radio slot contains: 
-				// Release 4 or later:  | Data1 |  TPC  | TFCI | Data2 | Pilot |
-				// Release 99 or 3:     | TFCI  | Data1 | TPC  | Data2 | Pilot |
-#ifdef RELEASE99 // defined in UMTSPhCh.cpp
-                                mRadioSlotBuf.writeFieldReversed(wp,tfciCode&tfciMask,ntfci);
-#endif
+				// The DCH radio slot contains: | Data1 |  TPC  | TFCI | Data2 | Pilot |
 				if (ndata1 > 0) {
-                                	U.segment(dataStart,ndata1).copyToSegment(mRadioSlotBuf,wp,ndata1);
-                                	wp += ndata1;
+					U.segment(dataStart,ndata1).copyToSegment(mRadioSlotBuf,wp,ndata1);
+					wp += ndata1;
 				}
 				// Lower layers are going to fill in TPC, we hope.
 				// Toggle tpc bits between all ones and all zeros to keep phone at same tx power
-			        mRadioSlotBuf.fill(0x7f,wp,ntpc); wp += ntpc;
-#ifndef RELEASE99
+				mRadioSlotBuf.fill(0x7f,wp,ntpc); wp += ntpc;
+
+				// There are basically two types of downlink Dedicated Physical Channels;
+				//  - those that include TFCI (e.g. for several simultaneous services) and
+				//  - those that do not include TFCI (e.g. for fixed-rate services).
+				// Update TFCI (wp is provided as ref arg and it will be updated within method)
 				mRadioSlotBuf.writeFieldReversed(wp,tfciCode&tfciMask,ntfci);
-#endif
+
 				if (ndata2 > 0) {
 					U.segment(dataStart+ndata1,ndata2).copyToSegment(mRadioSlotBuf,wp,ndata2);
 					wp += ndata2;

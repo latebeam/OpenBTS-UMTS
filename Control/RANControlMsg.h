@@ -26,7 +26,8 @@ enum eRanControlMsgType {
     eRRCConnectionRejectMsg,
     eRttMeasMsg,
     eRRCConnectionReleaseCcchMsg,
-    eCpichTxPowerMsg
+    eCpichTxPowerMsg,
+    eRttMeasRequestMsg
 };
 
 struct sRanControlMsgHeaderType {
@@ -78,6 +79,13 @@ struct sRRCConnectionAcceptMsgType {
 };
 
 struct sRRCConnectionRejectMsgType {
+    sRanControlMsgHeaderType sRanControlMsgHeader;
+    uint8_t ueIdType;
+    uint32_t URNTI;
+    uint16_t CRNTI;
+};
+
+struct sRttMeasRequestType {
     sRanControlMsgHeaderType sRanControlMsgHeader;
     uint8_t ueIdType;
     uint32_t URNTI;

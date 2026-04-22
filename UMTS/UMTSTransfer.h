@@ -161,6 +161,8 @@ class RxBitsBurst : public SoftVector {
                 mTfciBits[0] = -1;      // Mark as invalid so we can detect that.
         }
 
+	virtual ~RxBitsBurst() {}
+
 	unsigned SFI() const { return mSFI; }
 	unsigned SF() const { return 1<<mSFI; }
 

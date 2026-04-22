@@ -116,14 +116,22 @@ int SIPInterface::fifoSize(const std::string& call_id )
 
 
 
-void SIP::driveLoop( SIPInterface * si){
+void* SIP::driveLoop( SIPInterface * si){
 	while (true) {
 		si->drive();
 	}
+	return NULL;
 }
 
 void SIPInterface::start(){
-	// Start all the osip/ortp stuff. 
+	// The constructor left the socket unopened.  Bind it now.
+	int port = gConfig.getNum("SIP.Local.Port");
+	try {
+		mSIPSocket.open(port > 0 ? port : 0);
+	} catch (SocketError&) {
+		LOG(ALERT) << "SIP.Local.Port " << port << " in use";
+	}
+
 	parser_init();
 	ortp_init();
 	ortp_scheduler_init();

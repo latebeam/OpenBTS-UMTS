@@ -302,6 +302,43 @@ bool TrChConfig::configDchPS(DCHFEC *dch, TTICodes tticode, unsigned pb, bool us
 	return result;
 }
 
+void TrChConfig::defaultConfig1TrChSRB()
+{
+	// Define TrCh UL
+	LOG(INFO) << "defaultConfig1TrChSRB UL";
+
+	// TrCh 1 will carry SRB1,2,3.
+	ul()->getTfcs()->mNumTfc = 0;
+	ul()->getTfcs()->mCtfcSize = 0;
+
+	ul()->defineTrCh(TrChUlDCHType, 1, true)
+	->getTfs()
+	->setDedicatedCh()
+	->setSemiStatic(10, Convolutional, ASN::CodingRate_half, 256, 16)
+	->addTF(124, 0)->addTF(124, 1);
+
+	ul()->setCTFCSize(2)
+	->addTFC(0)->checkCTFC(0)
+	->addTFC(1)->checkCTFC(1)->setPower(PowerOffset(11));
+
+	// Define TrCh DL
+	LOG(INFO) << "defaultConfig1TrChSRB DL";
+
+	dl()->getTfcs()->mNumTfc = 0;
+	dl()->getTfcs()->mCtfcSize = 0;
+
+	DlTrChInfo *dlTrChInfo = dl()->defineTrCh(TrChDlDCHType, 1, true);
+	dlTrChInfo->getTfs()
+	->setDedicatedCh()
+	->setSemiStatic(10, Convolutional, ASN::CodingRate_half, 256, 16)
+	->addTF(180, 0)->addTF(180, 1);
+	dlTrChInfo->bler_QualityValue(7e-3);
+
+	dl()->setCTFCSize(2)
+	->addTFC(0)->checkCTFC(0)
+	->addTFC(1)->checkCTFC(1)->setPower(PowerOffset(11)); // What does setpower do here?
+}
+
 // From 25.331 13.7: Parameter values for default radio configurations.
 // This setup is for voice, 4 TrCH: 3 for AMR and 1 for signalling..
 // The "3" is the setup number from the documentation, not the number of TrCh.
@@ -512,15 +549,15 @@ void RrcTfcs::toAsnTfcs(ASN::TFCS *result, TrChType chtype)
 		ASN::TFCS_ReconfAdd_foo2 *foo = RN_CALLOC(ASN::TFCS_ReconfAdd_foo2);
 		foo->ctfc2 = mTfcList[i].mCTFC;
 		// Only uplink channels get power info:
-                if (chtype == TrChUlDCHType || chtype == TrChRACHType) {
-		foo->powerOffsetInformation = RN_CALLOC(ASN::PowerOffsetInformation);
-                (foo->powerOffsetInformation)->gainFactorInformation.present = ASN::GainFactorInformation_PR_signalledGainFactors;
-		(foo->powerOffsetInformation)->gainFactorInformation.choice.signalledGainFactors.modeSpecificInfo.present = ASN::SignalledGainFactors__modeSpecificInfo_PR_fdd;
-                (foo->powerOffsetInformation)->gainFactorInformation.choice.signalledGainFactors.modeSpecificInfo.choice.fdd.gainFactorBetaC = 15;
-                (foo->powerOffsetInformation)->gainFactorInformation.choice.signalledGainFactors.gainFactorBetaD = 15;
-				if (chtype == TrChRACHType) {
-					(foo->powerOffsetInformation)->powerOffsetPp_m = new long(2);
-				}
+		if (chtype == TrChUlDCHType || chtype == TrChRACHType) {
+			foo->powerOffsetInformation = RN_CALLOC(ASN::PowerOffsetInformation);
+			(foo->powerOffsetInformation)->gainFactorInformation.present = ASN::GainFactorInformation_PR_signalledGainFactors;
+			(foo->powerOffsetInformation)->gainFactorInformation.choice.signalledGainFactors.modeSpecificInfo.present = ASN::SignalledGainFactors__modeSpecificInfo_PR_fdd;
+			(foo->powerOffsetInformation)->gainFactorInformation.choice.signalledGainFactors.modeSpecificInfo.choice.fdd.gainFactorBetaC = 11; // TODO: Changed "15" to "11", should be in transport configuration
+			(foo->powerOffsetInformation)->gainFactorInformation.choice.signalledGainFactors.gainFactorBetaD = 15;
+			if (chtype == TrChRACHType) {
+				(foo->powerOffsetInformation)->powerOffsetPp_m = new long(2);
+			}
 		}
 		ASN_SEQUENCE_ADD(list,foo);
 	}
@@ -816,7 +853,7 @@ void RrcTfs::DynamicTFInfoList::toAsnCommon(ASN::CommonDynamicTF_InfoList *thing
 
 void RrcTfs::toAsnTfs(ASN::TransportFormatSet *result, bool isDownlink)
 {
-	memset(result,0,sizeof(result));
+	memset(result,0,sizeof(struct ASN::TransportFormatSet));
 	result->present = mPresent;
 	// Both choices have identical SemiStatic information, but in different places
 	// in the structure.  This wasn't really the cleverest way to encode this.

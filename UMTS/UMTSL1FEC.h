@@ -763,6 +763,10 @@ class FACHFEC : public PhChDownlink, public L1CCTrCh //L1FEC_t
 		PhChDownlink(SCCPCHType,wSF,wSpCode,wRadio),
 		L1CCTrCh(this) //L1FEC_t(this)
 	{
+		// Unused parameters
+		(void)wPB;
+		(void)wTBSize;
+		(void)tti;
 #if USE_OLD_FEC
 		FecProgInfoInit fpi(wSF,tti,wPB,getDlRadioFrameSize(),wTBSize); // parity and tti not programmable?
 		TrCHFECEncoder *encoder = new TrCHFECEncoderLowRate(this,fpi);
@@ -790,6 +794,10 @@ class RACHFEC : public PhChUplink, public L1CCTrCh //L1FEC_t
                 L1CCTrCh(this)
 		//L1FEC_t(this) // parity and TTI not programmable
 	{
+		// Unused parameters
+		(void)wPB;
+		(void)wTBSize;
+		(void)tti;
 #if USE_OLD_FEC
 		//unsigned codedBkSz = RrcDefs::R2EncodedSize(wTBSize+16);
 		FecProgInfoInit fpi(wSF,tti,wPB,getUlRadioFrameSize(),wTBSize);
@@ -819,7 +827,7 @@ class RACHFEC : public PhChUplink, public L1CCTrCh //L1FEC_t
 #if USE_OLD_DCH
 // DCH - configurable spreading factor, TTI 10 ms
 class DCHFEC : public PhCh, public TrCHFEC	// single TB, single TFC.
-{
+{    
 	public:
 	DCHFEC(unsigned wDlSF, unsigned wSpCode, unsigned wUlSF, unsigned wSrCode, ARFCNManager *wRadio) :
 		PhCh(DPDCHType, wDlSF, wSpCode, wUlSF, wSrCode, wRadio)
@@ -833,13 +841,23 @@ class DCHFEC : public PhCh, public TrCHFEC	// single TB, single TFC.
 #else
 class DCHFEC : public PhCh , public L1CCTrCh	// multiple TFC, multiple TB
 {
+    private:
+    int mThreadId;
+
 	public:
+	volatile float mLastUlSNR;	// Last measured UL SNR, used for TPC decisions
+	volatile int mLastActivityFN;	// Radio-time FN of last valid UL data; -1 = just opened (grace period)
+	Timeval mOpenTime;			// When DCH was last opened — used by orphan cleanup debounce
 	DCHFEC(unsigned wDlSF, unsigned wSpCode, unsigned wUlSF, unsigned wSrCode, ARFCNManager *wRadio) :
 		PhCh(DPDCHType, wDlSF, wSpCode, wUlSF, wSrCode, wRadio)
 		, L1CCTrCh(this)
+		, mLastUlSNR(0.0f)
+		, mLastActivityFN(-1)
 		{}
 	void open();
 	void close();
+    int getThreadId() const { return mThreadId; }
+    void setThreadId(int id) { mThreadId = id; }
 };
 #endif
 

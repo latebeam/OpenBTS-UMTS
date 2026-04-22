@@ -255,7 +255,9 @@ template<class Real> std::ostream& operator<<(std::ostream& os, const Complex<Re
   //os << z.r << ", ";
   //if (z.i>=0) { os << "+"; }
   os << z.i << "j";
+#if 0
   os << "\n";
+#endif
   return os;
 }
 
