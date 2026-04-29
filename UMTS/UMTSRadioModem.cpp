@@ -1079,10 +1079,12 @@ bool RadioModem::decodeDCH(signalVector &wBurst,
   //      the new lock — prevents "bad lock" on random noise peaks.
   static const int BOOTSTRAP_REQUIRED = 3;
   if (SNR >= 12.0f) {
+    UMTS::DCHFEC *dchFEC = static_cast<UMTS::DCHFEC*>(currDPDCH->fec);
     if (currDPDCH->lastTOA > -5000.0f) {
       // Normal tracking: already locked, apply continuity filter
       if (fabsf(TOA - currDPDCH->lastTOA) < 2.0f) {
         currDPDCH->pushRTT(slotIx, RTT);
+        if (dchFEC) dchFEC->mLastRttSampleTime = Timeval();
       }
     } else {
       // Bootstrap mode: collecting agreeing samples
@@ -1098,6 +1100,7 @@ bool RadioModem::decodeDCH(signalVector &wBurst,
           // Lock acquired — set lastTOA and push this sample
           currDPDCH->lastTOA = TOA;
           currDPDCH->pushRTT(slotIx, RTT);
+          if (dchFEC) dchFEC->mLastRttSampleTime = Timeval();
           currDPDCH->bootstrapCount = 0;
         }
       }
@@ -1608,6 +1611,7 @@ void RadioModem::transmitSlot(UMTS::Time nowTime, bool &underrun)
     unsigned bitsInSlot, npilot, pi, ndata1, ntpc, ntfci;
     bool hasDataBurst;
     float lastUlSNR;
+    float tpcTargetSnr;
   };
   TxDCHSnap txSnap[8];
   int txDchCount = 0;
@@ -1642,6 +1646,7 @@ void RadioModem::transmitSlot(UMTS::Time nowTime, bool &underrun)
 	s.ntfci = dlslot->mNTfci;
 	s.hasDataBurst = (receivedBursts.find(s.sf + (s.spcode << 16)) != receivedBursts.end());
 	s.lastUlSNR = currDCH->mLastUlSNR;
+	s.tpcTargetSnr = currDCH->mTpcTargetSnr;
 	txDchCount++;
     }
     gActiveDCH.inTxUse = false;
@@ -1649,12 +1654,28 @@ void RadioModem::transmitSlot(UMTS::Time nowTime, bool &underrun)
 
   for (int d = 0; d < txDchCount; d++) {
     TxDCHSnap &s = txSnap[d];
-    // SIR-based TPC: keep UE UL power at the minimum needed for DCH
-    // decode (target SNR ~8 dB).  Lower UL power = less interference
-    // on other UEs' RACH.  The old code sent all-1s (always up), ramping
-    // UE to max power and jamming simultaneous RACH from other UEs.
-    static const float TPC_TARGET_SNR = 8.0f;
-    unsigned tpcField = (s.lastUlSNR > TPC_TARGET_SNR) ? 0 : ((1 << s.ntpc)-1);
+    // SIR-based closed-loop TPC with hysteresis.
+    //
+    // mLastUlSNR only refreshes at slot 0 of each frame, so issuing 15
+    // same-direction TPC bits from one stale measurement = ±15 dB per
+    // frame → wild oscillation.  But "active only at slot 0" = ±1 dB
+    // per frame, too slow to react to target changes.
+    //
+    // Compromise: hysteresis band of factor 2 (~±3 dB) around target.
+    //   * SNR > 2× target  → DOWN every slot (fast convergence, −15 dB/frame)
+    //   * SNR < ½ target   → UP every slot   (fast convergence, +15 dB/frame)
+    //   * within ±3 dB of target → hold pattern (alternating bits, ±0)
+    // Result: snaps to target within a frame or two of any change, then
+    // sits stably inside the ±3 dB band.
+    unsigned tpcField;
+    float ratio = (s.tpcTargetSnr > 0.0f) ? (s.lastUlSNR / s.tpcTargetSnr) : 1.0f;
+    if (ratio > 2.0f) {
+      tpcField = 0;                                   // DOWN every slot
+    } else if (ratio < 0.5f) {
+      tpcField = (1 << s.ntpc) - 1;                   // UP every slot
+    } else {
+      tpcField = (slotIx & 1) ? 0 : ((1 << s.ntpc) - 1);   // hold (alternate)
+    }
     BitVector TPCBits(s.ntpc);
     TPCBits.fillField(0,tpcField,s.ntpc);
     int startIx = s.sf * (s.ndata1/2);

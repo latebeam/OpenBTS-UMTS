@@ -848,11 +848,14 @@ class DCHFEC : public PhCh , public L1CCTrCh	// multiple TFC, multiple TB
 	volatile float mLastUlSNR;	// Last measured UL SNR, used for TPC decisions
 	volatile int mLastActivityFN;	// Radio-time FN of last valid UL data; -1 = just opened (grace period)
 	Timeval mOpenTime;			// When DCH was last opened — used by orphan cleanup debounce
+	volatile float mTpcTargetSnr;
+	Timeval mLastRttSampleTime;
 	DCHFEC(unsigned wDlSF, unsigned wSpCode, unsigned wUlSF, unsigned wSrCode, ARFCNManager *wRadio) :
 		PhCh(DPDCHType, wDlSF, wSpCode, wUlSF, wSrCode, wRadio)
 		, L1CCTrCh(this)
 		, mLastUlSNR(0.0f)
 		, mLastActivityFN(-1)
+		, mTpcTargetSnr(8.0f)
 		{}
 	void open();
 	void close();

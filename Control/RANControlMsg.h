@@ -27,7 +27,8 @@ enum eRanControlMsgType {
     eRttMeasMsg,
     eRRCConnectionReleaseCcchMsg,
     eCpichTxPowerMsg,
-    eRttMeasRequestMsg
+    eRttMeasRequestMsg,
+    eMsPowerMsg
 };
 
 struct sRanControlMsgHeaderType {
@@ -107,7 +108,15 @@ struct sRRCConnectionReleaseCcchMsgType {
 
 struct sCpichTxPowerMsg {
     sRanControlMsgHeaderType sRanControlMsgHeader;
-    int cpichTxPower;
+    int cpichTxPower; // -10-50
+};
+
+struct sMsPowerMsg {
+    sRanControlMsgHeaderType sRanControlMsgHeader;
+    uint8_t ueIdType;
+    uint32_t URNTI;
+    uint16_t CRNTI;
+    int msPower; // 0-255
 };
 
 #pragma pack(pop)

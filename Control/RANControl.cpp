@@ -10,6 +10,7 @@
  */
 
 #include <UMTSConfig.h>
+#include <UMTSL1FEC.h>
 #include "Logger.h"
 #include "TCPSocket.h"
 #include "RANControl.h"
@@ -21,6 +22,7 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 #include <iomanip>
 #include <algorithm>
 
@@ -450,6 +452,50 @@ void RANControl::handleReceiveMessages(const sRanControlMsgHeaderType &header, c
             LOG(NOTICE) << uep << ": Starting RTT measurement";
             uep->startRttMeasurement(this);
         }
+        break;
+        case eMsPowerMsg:
+        {
+            sMsPowerMsg msPowerMsg;
+            memcpy(&msPowerMsg, dataMsg.c_str(), dataMsg.size());
+            uint32_t URNTI = ntohl(msPowerMsg.URNTI);
+            uint16_t CRNTI = ntohs(msPowerMsg.CRNTI);
+            int msPower = msPowerMsg.msPower;
+            
+            if (msPower < 0)   msPower = 0;
+            if (msPower > 255) msPower = 255;
+
+            UEInfo *uep = findUE(URNTI, CRNTI);
+            if (uep == NULL) {
+                LOG(ALERT) << "MS power msg: UE not found URNTI=" << URNTI << " CRNTI=" << CRNTI;
+                break;
+            }
+            UMTS::DCHFEC *dch = uep->mUeDch;
+            if (dch == NULL) {
+                LOG(ALERT) << uep << ": MS power msg ignored — UE has no DCH";
+                break;
+            }
+
+            // Map msPower 0..255 → SIR target.
+            //
+            // IMPORTANT: estimateChannel() returns LINEAR SNR (signal_power /
+            // noise_power), and mTpcTargetSnr is compared against that
+            // directly, so it must also be stored as a linear ratio — not
+            // dB!  We expose the user-facing range in dB (per TS 25.214
+            // §5.2.1), then convert to linear before storing.
+            //
+            // Range:  msPower=0   → SIR_MIN_DB  → UE pushed low
+            //         msPower=255 → SIR_MAX_DB  → UE pushed high
+            static const float SIR_MIN_DB =  5.0f;
+            static const float SIR_MAX_DB = 17.3f;
+            float targetDb     = SIR_MIN_DB + (msPower * (SIR_MAX_DB - SIR_MIN_DB)) / 255.0f;
+            float targetLinear = powf(10.0f, targetDb / 10.0f);
+
+            if (dch->mTpcTargetSnr == targetLinear) {
+                break;
+            }
+            dch->mTpcTargetSnr = targetLinear;
+        }
+        break;
         default:
         {
              LOG(INFO) << "Not supported type = " << (int) msgType;

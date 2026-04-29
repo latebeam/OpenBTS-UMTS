@@ -2345,25 +2345,7 @@ void UEInfo::ueRecvDcchMessage(ByteVector &bv,unsigned rbNum)
 				<< " for ue in idle mode " << uep;
 			break;
 		case stCELL_DCH:
-			LOG(NOTICE) << "Received SignallingConnectionReleaseIndication message"
-				<< " for ue in DCH mode " << uep;
-
-			// The SGSN will call back to rrc to send a RadioBearerRelease message,
-			// which should cause the UE to send RadioBearerReleaseComplete/Failure,
-			// which will kick the UE down to CELL_FACH state.
-			// Harvind (3-17-13) See above.  UE barfs when we send RadioBearerRelease.
-			//uep->ueSetState(stCELL_DCH);
-			if (lastTrans &&
-				(lastTrans->mTransactionType == ttRadioBearerRelease) &&
-				(lastTrans->elapsed() < 1000)) {
-				// Hmm.  Its not working.  Not sure what to do.  Try harder.
-				sendRrcConnectionRelease(uep);
-			} else {
-				// Harvind (3-17-13) See above.  Keep PDP context intact for smoother operation.
-				//printf("Freeing all PDP contexts.");
-				//uep->sgsnFreePdpAll(mURNTI);
-				sendRrcConnectionRelease(uep);
-			}
+			LOG(NOTICE) << uep << ": SCRI received in CELL_DCH";
 			break;
 		default:
 			sendRrcConnectionRelease(uep);

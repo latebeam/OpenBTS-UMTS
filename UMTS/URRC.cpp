@@ -599,6 +599,16 @@ void Rrc::purgeUEs()
 		case stCELL_DCH:
 		case stCELL_PCH:
 		case stURA_PCH:
+			{
+				static const long STALE_RTT_MS = 5000;
+				if (uep->isRttMeasurementStarted() &&
+					uep->mUeDch != NULL &&
+					uep->mUeDch->mLastRttSampleTime.elapsed() > STALE_RTT_MS &&
+					((last == NULL) || (last->mTransactionType != ttRrcConnectionRelease))) {
+						sendRrcConnectionRelease(uep);
+						break;
+				}
+			}
 			if ((elapsed > tInactivity) &&
 				(uep->isRttMeasurementStarted() == false) &&
 				((last == NULL) || (last->mTransactionType != ttRrcConnectionRelease))) {
