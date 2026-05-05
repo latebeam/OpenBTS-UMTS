@@ -15,9 +15,12 @@ include $(top_srcdir)/Makefile.common
 
 ACLOCAL_AMFLAGS = -I config
 
-# Order must be preserved
+# Order must be preserved.
+# third_party/libfec MUST come before CommonLibs because libcommon.a links
+# against the vendored libfec.a.
 SUBDIRS = \
 	config \
+	third_party/libfec \
 	ASN \
 	CommonLibs \
 	Globals \

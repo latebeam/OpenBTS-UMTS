@@ -644,7 +644,7 @@ class TrCHFECEncoderLowRate : public TrCHFECEncoder
 // It is Rate 1/2 Convolutional, which is dictated for RACH and one option for DCH.
 class TrCHFECDecoderLowRate : public TrCHFECDecoder
 {	protected:
-	ViterbiR2O9 mVCoder;
+	ViterbiR2O9Fec mVCoder;
 
 	public:
 	TrCHFECDecoderLowRate(TrCHFEC *wParent,FecProgInfo&fpi): TrCHFECDecoder(wParent,fpi) {};

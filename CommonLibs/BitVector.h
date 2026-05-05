@@ -27,6 +27,7 @@ class BitVector;
 class SoftVector;
 class ViterbiTurbo;
 class TurboInterleaver;
+class ViterbiR2O9Fec;
 
 
 
@@ -686,6 +687,7 @@ class SoftVector: public Vector<float>, public MemCheckSoftVector {
 	void decode(ViterbiR2O4 &decoder, BitVector& target) const;
 //#if RN_UMTS
 	void decode(ViterbiR2O9 &decoder, BitVector& target) const;
+	void decode(ViterbiR2O9Fec &decoder, BitVector& target) const;
 	void decode(ViterbiTurbo &decoder, SoftVector& target) const;
 	void decode(ViterbiTurbo &decoder, BitVector& target, TurboInterleaver& wInterleaver) const;
 	void decode(ViterbiTurbo &decoder, SoftVector& target, TurboInterleaver& wInterleaver) const;

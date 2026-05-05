@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <BitVector.h>
 #include <TurboCoder.h>
+#include <ViterbiR2O9Fec.h>
 #include <Interthread.h>
 #include "GSMCommon.h"
 #include "UMTSCommon.h"
@@ -490,7 +491,7 @@ class L1TrChEncoderLowRate : public L1TrChEncoder
 // It is Rate 1/2 Convolutional, which is dictated for RACH and one option for DCH.
 class L1TrChDecoderLowRate : public L1TrChDecoder
 {	protected:
-	ViterbiR2O9 mVCoder;
+	ViterbiR2O9Fec mVCoder;
 
 	public:
 	L1TrChDecoderLowRate(L1CCTrCh *wParent,L1FecProgInfo *wfpi) : L1TrChDecoder(wParent,wfpi) {}

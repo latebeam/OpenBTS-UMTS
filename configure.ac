@@ -29,10 +29,13 @@ AM_INIT_AUTOMAKE([-Wno-portability])
 
 dnl Checks for programs.
 : ${CXXFLAGS=""} ## remove auto setting of CXXFLAGS = -g -O2
+: ${CFLAGS=""}   ## same for CFLAGS — third_party/libfec needs a clean default
+AC_PROG_CC
 AC_PROG_CXX
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MAKE_SET
+AM_PROG_AR # required for third_party/libfec noinst_LIBRARIES
 AM_PROG_AS # GNU radio
 AC_PATH_PROG([RM_PROG], [rm]) # GNU radio
 
@@ -114,6 +117,7 @@ AC_CONFIG_FILES([\
     apps/Makefile \
     config/Makefile \
     doc/Makefile \
+    third_party/libfec/Makefile \
     CommonLibs/Makefile \
     Globals/Makefile \
     Control/Makefile \

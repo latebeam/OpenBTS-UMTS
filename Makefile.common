@@ -27,6 +27,12 @@
 
 
 AM_CXXFLAGS := -g -O3 -Wall -pthread -ldl -DTIMESTAMP_ISO=`date +'"%Y-%m-%dT%H:%M:%S"'`
+# AM_CFLAGS must be set explicitly because configure.ac empties the default
+# CFLAGS (`: ${CFLAGS=""}`).  Without this, .c sources (convolve.c, convert.c
+# in TransceiverPCIeSDR; the vendored libfec) compile with no -O flag and
+# the transceiver runs ~4× slower.  Per-target _CFLAGS (e.g. libfec_a_CFLAGS)
+# can still override this for a specific target.
+AM_CFLAGS := -g -O3 -Wall -pthread
 AM_CPPFLAGS = $(STD_DEFINES_AND_INCLUDES)
 
 COMMON_INCLUDEDIR = $(top_srcdir)/CommonLibs
@@ -42,6 +48,7 @@ GLOBALS_INCLUDEDIR = $(top_srcdir)/Globals
 CLI_INCLUDEDIR = $(top_srcdir)/CLI
 NODEMANAGER_INCLUDEDIR = $(top_srcdir)/NodeManager
 JSONBOX_INCLUDEDIR = $(top_srcdir)/NodeManager/JsonBox-0.4.3/include
+LIBFEC_INCLUDEDIR = $(top_srcdir)/third_party/libfec
 
 # default to TranceiverRAD1
 #TRANSCEIVER_INCLUDEDIR = $(top_srcdir)/TransceiverRAD1
@@ -65,9 +72,11 @@ STD_DEFINES_AND_INCLUDES = \
 	-I$(GLOBALS_INCLUDEDIR) \
 	-I$(CLI_INCLUDEDIR) \
 	-I$(NODEMANAGER_INCLUDEDIR) \
-	-I$(JSONBOX_INCLUDEDIR)
+	-I$(JSONBOX_INCLUDEDIR) \
+	-I$(LIBFEC_INCLUDEDIR)
 
-COMMON_LA = $(top_builddir)/CommonLibs/libcommon.la
+LIBFEC_A  = $(top_builddir)/third_party/libfec/libfec.a
+COMMON_LA = $(top_builddir)/CommonLibs/libcommon.la $(LIBFEC_A)
 GSM_LA = $(top_builddir)/GSM/libGSM.la
 UMTS_LA = $(top_builddir)/UMTS/libUMTS.la
 SGSNGGSN_LA = $(top_builddir)/SGSNGGSN/libSGSNGGSN.la

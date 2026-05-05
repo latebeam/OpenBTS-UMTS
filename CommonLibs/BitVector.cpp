@@ -15,6 +15,7 @@
 
 #include "BitVector.h"
 #include "TurboCoder.h"
+#include "ViterbiR2O9Fec.h"
 #include <iostream>
 #include <stdio.h>
 #include <sstream>
@@ -875,6 +876,52 @@ void SoftVector::decode(ViterbiR2O9 &decoder, BitVector& target) const
 			oCount++;
 			// cout << oCount << " " << std::hex << minCost->iState << "\n" << std::dec; //HACK
 		}
+	}
+}
+
+
+
+// libfec-backed decoder. See CommonLibs/ViterbiR2O9Fec.h for build notes
+// (libfec MUST be rebuilt with UMTS polynomials G0=0561, G1=0753).
+void SoftVector::decode(ViterbiR2O9Fec &decoder, BitVector& target) const
+{
+	const size_t sz = size();
+	assert((sz & 1) == 0);              // rate-1/2: input must be even
+	const unsigned nBits = sz / 2;      // data bits, excluding tail
+	assert(nBits <= target.size());
+
+	// UMTS 25.212 4.2.3.3 appends 8 zero tail bits to flush the encoder
+	// => 16 tail soft symbols should be present at end of input stream.
+	// If caller supplied exactly 2*nBits symbols (no tail) decoder falls
+	// back to zero-padded tail via libfec's internal handling at endstate=0.
+	const unsigned tailBits = 8;
+	const unsigned tailSymsAvailable = (unsigned)(sz) - nBits * 2;
+	(void)tailSymsAvailable; // input is pre-sliced by caller; libfec uses endstate=0
+
+	// Remap float [0,1] probability -> uint8_t soft symbol.
+	// libfec convention: 0 = strongly bit-0, 255 = strongly bit-1, 128 = erasure.
+	uint8_t syms[sz + tailBits * 2];
+	const float *dp = mStart;
+	for (size_t i = 0; i < sz; i++) {
+		float v = dp[i];
+		int q = (int)(v * 255.0f + 0.5f);
+		if (q < 0) q = 0;
+		if (q > 255) q = 255;
+		syms[i] = (uint8_t)q;
+	}
+	// Pad tail with strong-0 symbols (matches encoder's zero tail bits
+	// that drive state back to 0, aligning with endstate=0 in chainback).
+	for (unsigned i = 0; i < tailBits * 2; i++) syms[sz + i] = 0;
+
+	// libfec returns packed bytes, MSB-first.
+	const size_t packedLen = (nBits + 7) / 8;
+	uint8_t packed[packedLen];
+	decoder.decode(syms, nBits, tailBits, packed);
+
+	// Unpack MSB-first into target's 1-bit-per-byte format.
+	char *op = target.begin();
+	for (unsigned i = 0; i < nBits; i++) {
+		*op++ = (packed[i >> 3] >> (7 - (i & 7))) & 0x01;
 	}
 }
 
