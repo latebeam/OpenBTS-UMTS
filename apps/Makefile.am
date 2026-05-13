@@ -23,6 +23,7 @@ OpenBTS_UMTS_LDADD = \
 	$(GLOBALS_LA) \
 	$(CLI_LA) \
 	$(TRX_LA) \
+	$(TRANSCEIVER_LA) \
 	$(SIP_LA) \
 	$(UMTS_LA) \
 	$(CONTROL_LA) \
@@ -34,7 +35,10 @@ OpenBTS_UMTS_LDADD = \
 	$(OSIP_LIBS) \
 	$(ORTP_LIBS) \
 	$(COMMON_LA)
-OpenBTS_UMTS_CPPFLAGS = $(STD_DEFINES_AND_INCLUDES)
+# Link the PCIeSDR vendor library directly into OpenBTS-UMTS so the
+# transceiver runs in-process (no separate transceiver binary).
+OpenBTS_UMTS_LDFLAGS = -Wl,-rpath,$(PCIESDR_INCLUDEDIR) $(PCIESDR_INCLUDEDIR)/libsdr.so
+OpenBTS_UMTS_CPPFLAGS = $(STD_DEFINES_AND_INCLUDES) -I$(top_srcdir)/TransceiverPCIeSDR -I${PCIESDR_INCLUDEDIR}/kernel -I${PCIESDR_INCLUDEDIR}/api
 
 OpenBTS_UMTSCLI_SOURCES = OpenBTS-UMTSCLI.cpp
 OpenBTS_UMTSCLI_LDADD = -lreadline

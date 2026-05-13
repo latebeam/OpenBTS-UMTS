@@ -1,12 +1,12 @@
 /*
- * OpenBTS provides an open source alternative to legacy telco protocols and 
+ * OpenBTS provides an open source alternative to legacy telco protocols and
  * traditionally complex, proprietary hardware systems.
  *
  * Copyright 2008, 2010 Free Software Foundation, Inc.
  * Copyright 2012, 2014 Range Networks, Inc.
  *
- * This software is distributed under the terms of the GNU Affero General 
- * Public License version 3. See the COPYING and NOTICE files in the main 
+ * This software is distributed under the terms of the GNU Affero General
+ * Public License version 3. See the COPYING and NOTICE files in the main
  * directory for licensing information.
  *
  * This use of this software may be subject to additional restrictions.
@@ -23,6 +23,8 @@
 #include "UMTSConfig.h"
 #include "UMTSL1FEC.h"
 
+#include "Transceiver.h"
+#include "RadioInterface.h"
 
 #include <string>
 #include <string.h>
@@ -34,283 +36,46 @@
 using namespace UMTS;
 using namespace std;
 
-int ::ARFCNManager::sendCommandPacket(const char* command, char* response)
-{
-	int msgLen = 0;
-	//char cmdNameTest[15];
-	//int status;
-	int timeout = 6000;
-	response[0] = '\0';
-
-	LOG(INFO) << "command " << command;
-	mControlLock.lock();
-
-	mControlSocket.write(command);
-
-	/* Check for RSP response */
-	msgLen = mControlSocket.read(response, timeout);
-
-	if (msgLen == 0) {
-		LOG(NOTICE) << "No RSP : lost control link to transceiver";
-		mControlLock.unlock();
-		return 0;
-	}
-	else {
-		/* Check that it was a RSP message */
-		response[msgLen] = '\0';	/* Terminate message */
-		if ((msgLen>4) && (strncmp(response,"RSP ",4) == 0)) {
-			mControlLock.unlock();
-			return msgLen;
-		} else {
-			LOG(NOTICE) << "Bad RSP : lost control link to transceiver";
-	                LOG(ALERT) << "RSP response " << response;
-			mControlLock.unlock();
-			return 0;
-		}
-	}
-
-	/* Default */
-	mControlLock.unlock();
-	return 0;
-}
-
-bool ::ARFCNManager::powerOff()
-{
-        int status = sendCommand("POWEROFF");
-        if (status!=0) {
-                LOG(ALERT) << "POWEROFF failed with status " << status;
-                return false;
-        }
-        return true;
-}
-
-bool ::ARFCNManager::setPower(int dB)
-{
-        int status = sendCommand("SETPOWER",dB);
-        if (status!=0) {
-                LOG(ALERT) << "SETPOWER failed with status " << status;
-                return false;
-        }
-        return true;
-}
-
-bool ::ARFCNManager::setMaxDelay(unsigned km)
-{
-        int status = sendCommand("SETMAXDLY",km);
-        if (status!=0) {
-                LOG(ALERT) << "SETMAXDLY failed with status " << status;
-                return false;
-        }
-        return true;
-}
-
-signed ::ARFCNManager::setRxGain(signed rxGain)
-{
-        signed newRxGain;
-        int status = sendCommand("SETRXGAIN",rxGain,&newRxGain);
-        if (status!=0) {
-                LOG(ALERT) << "SETRXGAIN failed with status " << status;
-                return false;
-        }
-        return newRxGain;
-}
-
-signed ::ARFCNManager::readTxPwr(void)
-{
-        signed txPwr;
-        int status = sendCommand("READTXPWR", 0, &txPwr);
-        if (status!=0) {
-                LOG(ALERT) << "READTXPWR failed with status " << status;
-                return false;
-        }
-        return txPwr;
-}
-
-signed ::ARFCNManager::readRxPwrCoarse(void)
-{
-        signed rxPwr;
-        int status = sendCommand("READRXPWRCOARSE", 0, &rxPwr);
-        if (status!=0) {
-                LOG(ALERT) << "READRXPWRCOARSE failed with status " << status;
-                return false;
-        }
-        return rxPwr;
-}
-
-long long ::ARFCNManager::readRxPwrFine()
-{
-        long long rxPwr;
-        int status = sendCommand("READRXPWRFINE", &rxPwr);
-        if (status!=0) {
-                LOG(ALERT) << "READRXPWRFINE failed with status " << status;
-                return false;
-        }
-        return rxPwr;
-}
-
-signed ::ARFCNManager::setFreqOffset(signed offset)
-{
-        signed newFreqOffset;
-        int status = sendCommand("SETFREQOFFSET",offset,&newFreqOffset);
-        if (status!=0) {
-                LOG(ALERT) << "SETFREQOFFSET failed with status " << status;
-                return false;
-        }
-        return newFreqOffset;
-}
-
-signed ::ARFCNManager::getTemperature(void)
-{
-        signed temperature;
-        int status = sendCommand("TEMPERATURE", 0, &temperature);
-        if (status!=0) {
-                LOG(ALERT) << "TEMPERATURE failed with status " << status;
-                return false;
-        }
-        return temperature;
-}
-
-signed ::ARFCNManager::getNoiseLevel(void)
-{
-        signed noiselevel;
-        int status = sendCommand("NOISELEV",0,&noiselevel);
-        if (status!=0) {
-                LOG(ALERT) << "NOISELEV failed with status " << status;
-                return false;
-        }
-        return noiselevel;
-}
-
-bool ::ARFCNManager::radioPowerOff()
-{
-	int status = sendCommand("RADIOPOWEROFF");
-	if (status!=0) {
-		LOG(ALERT) << "RADIOPOWEROFF failed with status " << status;
-		return false;
-	}
-	return true;
-}
-
-bool ::ARFCNManager::radioPowerOn(bool warn)
-{
-	int status = sendCommand("RADIOPOWERON");
-	if (status!=0) {
-		if (warn) {
-			LOG(ALERT) << "RADIOPOWERON failed with status " << status;
-		} else {
-			LOG(INFO) << "RADIOPOWERON failed with status " << status;
-		}
-		
-		return false;
-	}
-	return true;
-}
-
-// (pat) There is a constructor race that culminates in UMTSRadioModem() failing
-// because the BitVectors in gRACHSignatures are not initialized.
-// The easiest fix is to do the TransceiverManager initialization in a function here
-// instead of in its constructor.
+/*
+ * TransceiverManager initialization.
+ * Clock is now driven directly by Transceiver::writeClockInterface()
+ * which calls gNodeB.clock().setFN() in-process.
+ */
 void TransceiverManager::TransceiverManagerInit(int numARFCNs,
-                const char* wTRXAddress, int wBasePort)
+                Transceiver *wTransceiver, RadioInterface *wRadioInterface)
 {
-        // Compact port layout — each OpenBTS-UMTS instance uses up to 10
-        // consecutive ports so multiple instances can coexist cleanly
-        // (next instance starts at wBasePort+10):
-        //   +0: transceiver clock bind
-        //   +1: OpenBTS clock bind (this socket)
-        //   +2..+5: ARFCN 0 (trx ctrl, UMTS ctrl, trx data, UMTS data)
-        //   +6..+9: ARFCN 1
-        mClockSocket.open(wBasePort+1);
-        for (int i=0; i<numARFCNs; i++) {
-                int thisBasePort = wBasePort + 2 + 4*i;
-                mARFCNs.push_back(new ::ARFCNManager(wTRXAddress,thisBasePort,*this,i));
+        mTransceiver = wTransceiver;
+        mRadioInterface = wRadioInterface;
+        for (int i = 0; i < numARFCNs; i++) {
+                mARFCNs.push_back(new ::ARFCNManager(wTransceiver, wRadioInterface, *this, i));
         }
 }
 
 void TransceiverManager::trxStart()
 {
-        mClockThread.start((void*(*)(void*))ClockLoopAdapter,this);
-        for (unsigned i=0; i<mARFCNs.size(); i++) {
+        for (unsigned i = 0; i < mARFCNs.size(); i++) {
                 mARFCNs[i]->arfcnManagerStart();
         }
 }
 
-void* ClockLoopAdapter(TransceiverManager *transceiver)
-{
-        Timeval nextContact;
-        while (1) {
-                transceiver->clockHandler();
-                /*if (nextContact.passed()) {
-                        // FIXME -- Phone Home Here
-                        if (gConfig.defines("NTP.Server")) {
-                                string ntp = string("ntpdate ") + gConfig.getStr("NTP.Server");
-                                system(ntp.c_str());
-                        }
-                        nextContact.addMinutes(random() % (24*60));
-                }*/
-        }
-        return NULL;
-}
-
-
-void TransceiverManager::clockHandler()
-{
-        char buffer[MAX_UDP_LENGTH];
-        int msgLen = mClockSocket.read(buffer,3000);
-
-        // Did the transceiver die??
-        if (msgLen<0) {
-                LOG(ALERT) << "TRX clock interface timed out, assuming TRX is dead.";
-                // FIXME: Pat removed abort to debug this thing.
-                //abort();
-                return;
-        }
-
-        if (msgLen==0) {
-                LOG(ALERT) << "read error on TRX clock interface, return " << msgLen;
-                return;
-        }
-
-        if (strncmp(buffer,"IND CLOCK",9)==0) {
-                uint32_t FN;
-                sscanf(buffer,"IND CLOCK %u", &FN);
-                LOG(INFO) << "CLOCK indication, clock="<<FN << ", was=" << gNodeB.clock().FN();
-                gNodeB.clock().setFN(FN);
-                mHaveClock = true;
-                return;
-        }
-
-        buffer[msgLen]='\0';
-        LOG(ALERT) << "bogus message " << buffer << " on clock interface";
-}
-
-::ARFCNManager::ARFCNManager(const char* wTRXAddress, int wBasePort, TransceiverManager &wTransceiver, unsigned wCId)
+::ARFCNManager::ARFCNManager(Transceiver *wTrx, RadioInterface *wRadioInterface,
+                             TransceiverManager &wTransceiver, unsigned wCId)
         :mTransceiver(wTransceiver),
-        // wBasePort points to this ARFCN's 4-port block:
-        //   +0: transceiver control bind
-        //   +1: OpenBTS control bind (this socket)
-        //   +2: transceiver data bind
-        //   +3: OpenBTS data bind (this socket)
-        mDataSocket(wBasePort+3,wTRXAddress,wBasePort+2),
-        mControlSocket(wBasePort+1,wTRXAddress,wBasePort+0),
-        mRadioModem(mDataSocket),
+        mTrx(wTrx),
+        mRadioInterface(wRadioInterface),
         mCId(wCId)
 {
+        // Connect RadioModem <-> Transceiver for direct data path
+        mRadioModem.setTransceiver(wTrx);
+        if (wTrx) {
+                wTrx->setRadioModem(&mRadioModem);
+        }
         mRadioModem.radioModemStart();
-        // The default demux table is full of NULL pointers.
-//      for (int i=0; i<8; i++) {
-//              for (unsigned j=0; j<maxModulus; j++) {
-//                      mDemuxTable[i][j] = NULL;
-//              }
-//      }
 }
-
-
 
 
 void ::ARFCNManager::arfcnManagerStart()
 {
-        mRxThread.start((void*(*)(void*))ReceiveLoopAdapter,this);
         mTxThread.start((void*(*)(void*))TransmitLoopAdapter,this);
 }
 
@@ -322,93 +87,151 @@ void* TransmitLoopAdapter(::ARFCNManager* manager)
 }
 
 
-void* ReceiveLoopAdapter(::ARFCNManager* manager)
+void ::ARFCNManager::writeHighSide(TxBitsBurst* txBurst)
 {
-        manager->receiveLoop();
-        // do not reach
-        return NULL;    // pacify the compiler
-}
-
-int ::ARFCNManager::sendCommand(const char*command, int param, int *responseParam)
-{
-        // Send command and get response.
-        char cmdBuf[MAX_UDP_LENGTH];
-        char response[MAX_UDP_LENGTH];
-        sprintf(cmdBuf,"CMD %s %d", command, param);
-        int rspLen = sendCommandPacket(cmdBuf,response);
-        if (rspLen<=0) return -1;
-        // Parse and check status.
-        char cmdNameTest[15];
-        int status;
-        cmdNameTest[0]='\0';
-        if (!responseParam)
-          sscanf(response,"RSP %15s %d", cmdNameTest, &status);
-        else
-          sscanf(response,"RSP %15s %d %d", cmdNameTest, &status, responseParam);
-        if (strcmp(cmdNameTest,command)!=0) return -1;
-        return status;
-}
-
-
-int ::ARFCNManager::sendCommand(const char*command, const char* param)
-{
-        // Send command and get response.
-        char cmdBuf[MAX_UDP_LENGTH];
-        char response[MAX_UDP_LENGTH];
-        sprintf(cmdBuf,"CMD %s %s", command, param);
-        int rspLen = sendCommandPacket(cmdBuf,response);
-        if (rspLen<=0) return -1;
-        // Parse and check status.
-        char cmdNameTest[15];
-        int status;
-        cmdNameTest[0]='\0';
-        sscanf(response,"RSP %15s %d", cmdNameTest, &status);
-        if (strcmp(cmdNameTest,command)!=0) return -1;
-        return status;
-}
-
-int ::ARFCNManager::sendCommand(const char*command, long long *responseParam)
-{
-        // Send command and get response.
-        char cmdBuf[MAX_UDP_LENGTH];
-        char response[MAX_UDP_LENGTH];
-        sprintf(cmdBuf,"CMD %s", command);
-        int rspLen = sendCommandPacket(cmdBuf,response);
-        if (rspLen<=0) return -1;
-        // Parse and check status.
-        char cmdNameTest[15];
-        int status;
-        cmdNameTest[0]='\0';
-        if (!responseParam)
-          sscanf(response,"RSP %15s %d", cmdNameTest, &status);
-        else
-          sscanf(response,"RSP %15s %d %llx", cmdNameTest, &status, responseParam);
-
-        if (strcmp(cmdNameTest,command)!=0)
-        {
-                printf("TRXManager:sendCommand Failed because RSP cmdNameTest:%s != command:%s.\n\r", cmdNameTest, command);
-                return -1;
+        bool underrun;
+        Time updateTime;
+        mRadioModem.addBurst(txBurst,underrun,updateTime);
+        if (underrun) {
+                delete txBurst;
         }
-        return status;
 }
 
-int ::ARFCNManager::sendCommand(const char*command)
+void ::ARFCNManager::transmitLoop(void)
 {
-        // Send command and get response.
-        char cmdBuf[MAX_UDP_LENGTH];
-        char response[MAX_UDP_LENGTH];
-        sprintf(cmdBuf,"CMD %s", command);
-        int rspLen = sendCommandPacket(cmdBuf,response);
-        if (rspLen<=0) return -1;
-        // Parse and check status.
-        char cmdNameTest[15];
-        int status;
-        cmdNameTest[0]='\0';
-        sscanf(response,"RSP %15s %d", cmdNameTest, &status);
-        if (strcmp(cmdNameTest,command)!=0) return -1;
-        return status;
+        /*
+         * Slot-level TX generation driven by the Transceiver's hardware deadline clock.
+         *
+         * Previously this generated full frames (15 slots at once) driven by
+         * gNodeB.clock().FN() which included wall-time extrapolation, causing
+         * mLastTransmitTime to run 8+ frames ahead of RX -- making it impossible
+         * to inject AICH at the spec-required time (5 slots after preamble).
+         *
+         * Now we generate one slot at a time, tracking the Transceiver's actual
+         * TX deadline (what has been pushed to hardware). This keeps mLastTransmitTime
+         * within a few slots of the deadline, enabling on-time AICH insertion.
+         */
+
+        // Wait for Transceiver to start streaming (powerOn -> start()).
+        // The Transceiver resets mTransmitDeadlineClock in start() when
+        // hardware begins streaming. We sync to this, not gNodeB.clock()
+        // which uses wall-time extrapolation and runs ahead.
+        UMTS::Time currTime;
+        bool synced = false;
+
+        while (1) {
+          usleep(200);  // 200us -- slot-level granularity (1 slot ~ 667us)
+
+          if (!mTrx) { synced = false; continue; }
+
+          // Re-sync to deadline whenever the Transceiver isn't running
+          // (initial start, or after a stop/restart cycle).  Without this,
+          // currTime keeps the pre-stop value while start() resets the
+          // deadline, leaving currTime > target forever — transmitSlot
+          // stops draining mTxQueue and BCH bursts pile up to the assert.
+          if (!mTrx->isRunning()) { synced = false; continue; }
+          if (!synced) {
+            currTime = mTrx->getTransmitDeadline();
+            synced = true;
+          }
+
+          // Generate TX data AHEAD of the hardware deadline so that
+          // driveTransmitFIFO always finds data in the queue.
+          // The deadline is the slot being pushed to hardware RIGHT NOW.
+          // We must have already generated that slot's waveform.
+          //
+          // Lookahead of 2 slots (~1.3ms). With Transceiver latency of 4 slots,
+          // total TX lead is ~6 slots. AICH target at offset 7 hasn't been
+          // composited yet (7 > 6), so AICH goes through normal Path A.
+          // Lookahead 2 provides enough buffer to avoid TX underruns.
+          UMTS::Time deadline = mTrx->getTransmitDeadline();
+          UMTS::Time target = deadline + UMTS::Time(0, 2);
+
+          bool underrun = false;
+          while (currTime < target) {
+            mRadioModem.transmitSlot(currTime, underrun);
+            currTime.incTN();
+          }
+        }
 }
 
+/*
+ * Direct control interface methods.
+ * These replace the old UDP sendCommand() path.
+ * Each method calls Transceiver or RadioInterface directly.
+ */
+
+bool ::ARFCNManager::powerOff()
+{
+        if (mTrx) mTrx->powerOff();
+        return true;
+}
+
+bool ::ARFCNManager::setPower(int dB)
+{
+        if (mTrx) mTrx->setPower(dB);
+        return true;
+}
+
+bool ::ARFCNManager::setMaxDelay(unsigned km)
+{
+        // Delay spread is set during Transceiver::init()
+        return true;
+}
+
+signed ::ARFCNManager::setRxGain(signed rxGain)
+{
+        if (mTrx) return mTrx->setRxGain(rxGain);
+        return -1;
+}
+
+signed ::ARFCNManager::readTxPwr(void)
+{
+        // Not implemented for direct interface
+        return 0;
+}
+
+signed ::ARFCNManager::readRxPwrCoarse(void)
+{
+        // Not implemented for direct interface
+        return 0;
+}
+
+long long ::ARFCNManager::readRxPwrFine()
+{
+        // Not implemented for direct interface
+        return 0;
+}
+
+signed ::ARFCNManager::setFreqOffset(signed offset)
+{
+        // Not supported in PCIeSDR direct mode
+        return 0;
+}
+
+signed ::ARFCNManager::getTemperature(void)
+{
+        // Not implemented for direct interface
+        return 0;
+}
+
+signed ::ARFCNManager::getNoiseLevel(void)
+{
+        // Not implemented for direct interface
+        return 0;
+}
+
+bool ::ARFCNManager::radioPowerOff()
+{
+        if (mTrx) mTrx->powerOff();
+        return true;
+}
+
+bool ::ARFCNManager::radioPowerOn(bool warn)
+{
+        if (mTrx) return mTrx->powerOn();
+        return false;
+}
 
 bool ::ARFCNManager::tune(unsigned wUARFCN)
 {
@@ -417,16 +240,14 @@ bool ::ARFCNManager::tune(unsigned wUARFCN)
         unsigned rxFreq = txFreq-uplinkOffsetKHz(gNodeB.band());
 
         // tune tx
-        int status = sendCommand("TXTUNE",txFreq);
-        if (status!=0) {
-                LOG(ALERT) << "TXTUNE failed with status " << status;
+        if (mTrx && !mTrx->tuneTx(txFreq)) {
+                LOG(ALERT) << "TXTUNE failed";
                 return false;
         }
 
         // tune rx
-        status = sendCommand("RXTUNE",rxFreq);
-        if (status!=0) {
-                LOG(ALERT) << "RXTUNE failed with status " << status;
+        if (mTrx && !mTrx->tuneRx(rxFreq)) {
+                LOG(ALERT) << "RXTUNE failed";
                 return false;
         }
 
@@ -439,16 +260,15 @@ bool ::ARFCNManager::tuneLoopback(int wARFCN)
 {
         // convert ARFCN number to a frequency
         unsigned txFreq = channelFreqKHz(gNodeB.band(),wARFCN);
+
         // tune rx
-        int status = sendCommand("RXTUNE",txFreq);
-        if (status!=0) {
-                LOG(ALERT) << "RXTUNE failed with status " << status;
+        if (mTrx && !mTrx->tuneRx(txFreq)) {
+                LOG(ALERT) << "RXTUNE failed";
                 return false;
         }
         // tune tx
-        status = sendCommand("TXTUNE",txFreq);
-        if (status!=0) {
-                LOG(ALERT) << "TXTUNE failed with status " << status;
+        if (mTrx && !mTrx->tuneTx(txFreq)) {
+                LOG(ALERT) << "TXTUNE failed";
                 return false;
         }
         // done
@@ -456,144 +276,29 @@ bool ::ARFCNManager::tuneLoopback(int wARFCN)
         return true;
 }
 
-
-void ::ARFCNManager::writeHighSide(TxBitsBurst* txBurst)
-{
-//      mTransmitLock.lock();
-        bool underrun;
-        Time updateTime;
-        mRadioModem.addBurst(txBurst,underrun,updateTime);
-        if (underrun) {
-                //LOG(NOTICE) << "tx underrun: " << *txBurst << " at time " << txBurst->time();
-// XXX RPERRY                LOG(NOTICE) << "tx underrun: "<<getId() <<LOGVARP(txBurst) <<LOGVAR(updateTime);
-                delete txBurst;
-                //gNodeB.clock().set(updateTime.FN());
-                // TODO -- update clock offset here
-        }
-
-//      mUnderrun = mUnderrun | underrun;
-//      mTransmitLock.unlock();
-}
-
-void ::ARFCNManager::transmitLoop(void)
-{
-        int32_t currFN = gNodeB.clock().FN();
-        while (1) {
-          bool underrun;
-          usleep(UMTS::gFrameMicroseconds/10);
-          //LOG(INFO) << "transmitLoop"<<LOGVAR(currFN)<<LOGVAR(fnbefore)<<LOGVAR2("clock.FN",gNodeB.clock().FN()) <<LOGVAR2("mLastTransmitTime",mRadioModem.mLastTransmitTime);
-          // (pat) I moved the test from after to before this loop, which prevents it from running ahead.
-          // Documentation says usleep may return early, and this prevents advancing currFN in that case.
-          while (Time(currFN) < Time(gNodeB.clock().FN())) {
-            underrun = false;
-            for (unsigned int i = 0; i < gFrameSlots;i++) {
-              mRadioModem.transmitSlot(Time(currFN,i),underrun);
-            }
-            currFN++;
-            currFN = currFN % gHyperframe;
-                  // (pat) Converting to Time() is a way to use modulo arithmetic on FN.
-          } //while (Time(currFN) < Time(gNodeB.clock().FN()));
-        }
-}
-
-void ::ARFCNManager::receiveLoop(void)
-{
-        while (1) mRadioModem.receiveBurst();
-}
-
 bool ::ARFCNManager::powerOn()
 {
-        int status = sendCommand("POWERON");
-        if (status!=0) {
-                LOG(ALERT) << "POWERON failed with status " << status;
-                return false;
-        }
-        return true;
+        if (mTrx) return mTrx->powerOn();
+        return false;
 }
 
 bool ::ARFCNManager::resetFx3()
 {
-        int status = sendCommand("RESETFX3");
-        if (status!=0) {
-                LOG(ALERT) << "RESETFX3 failed with status " << status;
-                return false;
-        }
+        // Not implemented for PCIeSDR direct interface
         return true;
-}
-
-bool ::ARFCNManager::sysPowerOn(bool warn)
-{
-	int status = sendCommand("SYSPOWERON");
-	if (status!=0) {
-		if (warn) {
-			LOG(ALERT) << "SYSPOWERON failed with status " << status;
-		} else {
-			LOG(INFO) << "SYSPOWERON failed with status " << status;
-		}
-		
-		return false;
-	}
-	return true;
 }
 
 bool ::ARFCNManager::txPowerOn(unsigned band)
 {
-	int status = sendCommand("TXPOWERON", band);
-	if (status!=0) {
-		LOG(ALERT) << "TXPOWERON failed with status " << status;
-		return false;
-	}
-	return true;
-}
-
-bool ::ARFCNManager::setTxQmcGain(unsigned gain_A, unsigned gain_B, unsigned phase)
-{
-        char paramBuf[MAX_UDP_LENGTH];
-        sprintf(paramBuf,"%d %d %d", gain_A, gain_B, phase);
-        int status = sendCommand("SETTXQMCGAIN", paramBuf);
-        if (status!=0) {
-                LOG(ALERT) << "SETTXQMCGAIN failed with status " << status;
-                return false;
-        }
+        // Not implemented for PCIeSDR direct interface
         return true;
 }
 
-bool ::ARFCNManager::setTxQmcOffset(unsigned offset_A, unsigned offset_B)
+signed ::ARFCNManager::getFactoryCalibration(const char * param)
 {
-        char paramBuf[MAX_UDP_LENGTH];
-        sprintf(paramBuf,"%d %d", offset_A, offset_B);
-        int status = sendCommand("SETTXQMCOFFSET", paramBuf);
-        if (status!=0) {
-                LOG(ALERT) << "SETTXQMCOFFSET failed with status " << status;
-                return false;
-        }
-        return true;
+        // Not implemented for PCIeSDR direct interface
+        return 0;
 }
-
-bool ::ARFCNManager::setRxQmcGain(unsigned gain_A, unsigned gain_B, unsigned phase)
-{
-        char paramBuf[MAX_UDP_LENGTH];
-        sprintf(paramBuf,"%d %d %d", gain_A, gain_B, phase);
-        int status = sendCommand("SETRXQMCGAIN", paramBuf);
-        if (status!=0) {
-                LOG(ALERT) << "SETRXQMCGAIN failed with status " << status;
-                return false;
-        }
-        return true;
-}
-
-bool ::ARFCNManager::setRxQmcOffset(unsigned offset_A, unsigned offset_B)
-{
-        char paramBuf[MAX_UDP_LENGTH];
-        sprintf(paramBuf,"%d %d", offset_A, offset_B);
-        int status = sendCommand("SETRXQMCOFFSET", paramBuf);
-        if (status!=0) {
-                LOG(ALERT) << "SETRXQMCOFFSET failed with status " << status;
-                return false;
-        }
-        return true;
-}
-
 
 
 // vim: ts=4 sw=4

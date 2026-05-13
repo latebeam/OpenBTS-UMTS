@@ -86,22 +86,11 @@ AS_IF([gcc -I=/usr/local/include -o config/test_ortp_version config/test_ortp_ve
 # Defines LIBUSB_TRANSFER_CANCELLED, LIBUSB_TRANSFER_COMPLETED, LIBUSB_SUCCESS, LIBUSB_ERROR_*
 PKG_CHECK_MODULES(LIBUSB, libusb-1.0)
 
-PKG_CHECK_MODULES(UHD, uhd >= 003.007.000,
-    [AC_DEFINE(HAVE_UHD, 1, [Define if UHD found.])
-     AM_CONDITIONAL(HAVE_UHD, true)
-     AX_EXT],
-    [AM_CONDITIONAL(HAVE_UHD, false)])
-
-
-
-
 AC_ARG_VAR([PCIESDR_TRX_DIR], [Path to pciesdr files])
-AS_IF([test -f "$PCIESDR_TRX_DIR/api/libsdr.h"], [
-  have_pciesdr=yes
-], [
-  have_pciesdr=no
+AS_IF([test -f "$PCIESDR_TRX_DIR/api/libsdr.h"], [], [
+  AC_MSG_ERROR([PCIESDR_TRX_DIR must point to the pciesdr directory (libsdr.h not found in $PCIESDR_TRX_DIR/api/)])
 ])
-AM_CONDITIONAL([HAVE_PCIESDR], [test "x$have_pciesdr" = "xyes"])
+AM_CONDITIONAL([HAVE_PCIESDR], [true])
 
 
 
@@ -126,8 +115,6 @@ AC_CONFIG_FILES([\
     SGSNGGSN/Makefile \
     SIP/Makefile \
     SMS/Makefile \
-    TransceiverRAD1/Makefile \
-    TransceiverUHD/Makefile \
     TransceiverPCIeSDR/Makefile \
     TRXManager/Makefile \
     CLI/Makefile \

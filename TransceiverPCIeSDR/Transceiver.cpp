@@ -8,11 +8,11 @@
  * Copyright 2014 Range Networks, Inc.
  * Copyright 2014 Ettus Research LLC
  * Copyright 2026 Late Beam
- * 
- * This software is distributed under the terms of the GNU General Public 
+ *
+ * This software is distributed under the terms of the GNU General Public
  * License version 3. See the COPYING and NOTICE files in the current
  * directory for licensing information.
- * 
+ *
  * This use of this software may be subject to additional restrictions.
  * See the LEGAL file in the main directory for details.
  */
@@ -20,28 +20,23 @@
 #include <stdio.h>
 #include <Logger.h>
 #include "Transceiver.h"
+#include "UMTSRadioModem.h"
+#include "UMTSConfig.h"
 
 /* Clock indication reporting interval in frames */
-#define CLK_IND_INTERVAL          10
+#define CLK_IND_INTERVAL          1
 
 /* Default attenuation value in dB */
 #define DEFAULT_ATTEN             20
 
-Transceiver::Transceiver(int wBasePort,
-                         const char *wTRXAddress,
-                         UMTS::Time wTransmitLatency,
+extern UMTS::UMTSConfig gNodeB;
+
+Transceiver::Transceiver(UMTS::Time wTransmitLatency,
                          RadioInterface *wRadioInterface)
-  // Compact port layout matching TRXManager:
-  //   +0: clock bind (this socket), sends to +1 (OpenBTS clock)
-  //   +2: control bind (this socket), sends to +3 (OpenBTS ARFCN 0 control)
-  //   +4: data bind (this socket), sends to +5 (OpenBTS ARFCN 0 data)
-  : mDataSocket(wBasePort + 4, wTRXAddress, wBasePort + 5),
-    mControlSocket(wBasePort + 2, wTRXAddress, wBasePort + 3),
-    mClockSocket(wBasePort + 0, wTRXAddress, wBasePort + 1),
-    mTxServiceLoopThread(NULL), mRxServiceLoopThread(NULL),
-    mTransmitPriorityQueueServiceLoopThread(NULL),
-    mControlServiceLoopThread(NULL), mOn(false), mPower(DEFAULT_ATTEN),
-    mTransmitLatency(wTransmitLatency), mRadioInterface(wRadioInterface)
+  : mTxServiceLoopThread(NULL), mRxServiceLoopThread(NULL),
+    mOn(false), mPower(DEFAULT_ATTEN),
+    mTransmitLatency(wTransmitLatency), mRadioInterface(wRadioInterface),
+    mRadioModem(NULL)
 {
   signalVector emptyVector(UMTS::gSlotLen);
   UMTS::Time emptyTime(0, 0);
@@ -52,24 +47,13 @@ Transceiver::Transceiver(int wBasePort,
 Transceiver::~Transceiver()
 {
   stop();
-
-  if (mControlServiceLoopThread) {
-    mControlServiceLoopThread->cancel();
-    mControlServiceLoopThread->join();
-    delete mControlServiceLoopThread;
-  }
-
   delete mEmptyTransmitBurst;
 }
 
 /*
  * Initialize transceiver
  *
- * Start or restart the control loop. Any further control is handled through the
- * socket API. Randomize the central radio clock set the downlink burst
- * counters. Note that the clock will not update until the radio starts, but we
- * are still expected to report clock indications through control channel
- * activity.
+ * Randomize the central radio clock and set the downlink burst counters.
  */
 void Transceiver::init(int wDelaySpread)
 {
@@ -77,12 +61,6 @@ void Transceiver::init(int wDelaySpread)
     wDelaySpread = 0;
 
   stop();
-
-  if (mControlServiceLoopThread) {
-    mControlServiceLoopThread->cancel();
-    mControlServiceLoopThread->join();
-    delete mControlServiceLoopThread;
-  }
 
   UMTS::Time time(random() % 1024, 0);
   mRadioInterface->getClock()->set(time);
@@ -92,19 +70,13 @@ void Transceiver::init(int wDelaySpread)
 
   mDelaySpread = wDelaySpread;
   mPower = mRadioInterface->setPowerAttenuation(mPower);
-
-  mControlServiceLoopThread = new Thread(PTHREAD_STACK_MIN);
-  mControlServiceLoopThread->start((void * (*)(void*))
-                                   ControlServiceLoopAdapter, (void*) this);
 }
 
 /*
  * Start the transceiver
  *
  * Submit command(s) to the radio device to commence streaming samples and
- * launch threads to handle sample I/O. Re-synchronize the transmit burst
- * counters to the central radio clock here as well. Perform locking because the
- * stop request can occur simultaneously (i.e. shutdown).
+ * launch threads to handle sample I/O.
  */
 bool Transceiver::start()
 {
@@ -130,14 +102,11 @@ bool Transceiver::start()
   /* Device is running - launch I/O threads */
   mTxServiceLoopThread = new Thread(8 * 32768);
   mRxServiceLoopThread = new Thread(8 * 32768);
-  mTransmitPriorityQueueServiceLoopThread = new Thread(8 * 32768);
 
   mTxServiceLoopThread->start((void * (*)(void*))
                               TxServiceLoopAdapter, (void*) this);
   mRxServiceLoopThread->start((void * (*)(void*))
                               RxServiceLoopAdapter, (void*) this);
-  mTransmitPriorityQueueServiceLoopThread->start((void * (*)(void*))
-                         TransmitPriorityQueueServiceLoopAdapter, (void*) this);
   writeClockInterface();
 
   mOn = true;
@@ -149,10 +118,7 @@ bool Transceiver::start()
  * Stop the transceiver
  *
  * Perform stopping by disabling receive streaming and issuing cancellation
- * requests to running threads. Threads will timeout and terminate at the
- * cancellation points once the device is disabled. Perform locking since the
- * stop request can come from the destructor (i.e. shutdown) in addition to the
- * control thread.
+ * requests to running threads.
  */
 void Transceiver::stop()
 {
@@ -164,7 +130,6 @@ void Transceiver::stop()
   LOG(NOTICE) << "Stopping the transceiver";
   mTxServiceLoopThread->cancel();
   mRxServiceLoopThread->cancel();
-  mTransmitPriorityQueueServiceLoopThread->cancel();
 
   LOG(INFO) << "Stopping the device";
   mRadioInterface->stop();
@@ -172,11 +137,9 @@ void Transceiver::stop()
   LOG(INFO) << "Terminating threads";
   mRxServiceLoopThread->join();
   mTxServiceLoopThread->join();
-  mTransmitPriorityQueueServiceLoopThread->join();
 
   delete mTxServiceLoopThread;
   delete mRxServiceLoopThread;
-  delete mTransmitPriorityQueueServiceLoopThread;
 
   mTransmitPriorityQueue.clear();
 
@@ -186,7 +149,7 @@ void Transceiver::stop()
 
 void Transceiver::addRadioVector(signalVector &burst, UMTS::Time &wTime)
 {
-  // modulate and stick into queue 
+  // modulate and stick into queue
   radioVector *vec = new radioVector(burst, wTime);
   RN_MEMLOG(radioVector, vec);
   mTransmitPriorityQueue.write(vec);
@@ -206,9 +169,65 @@ void Transceiver::pushRadioVector(UMTS::Time &now)
 
   // if queue contains data at the desired timestamp, stick it into FIFO
   if ((next = (radioVector*) mTransmitPriorityQueue.getCurrentBurst(now))) {
+    // Check for AICH overlay: if a RACH preamble was detected after this
+    // slot was composited by transmitSlot, the AICH waveform is waiting
+    // here to be added to the burst before hardware push.
+    {
+      ScopedLock lock(mAICHOverlayLock);
+      auto it = mAICHOverlays.find(now);
+      if (it != mAICHOverlays.end()) {
+        signalVector *overlay = it->second;
+        signalVector::iterator src = overlay->begin();
+        radioVector::iterator dst = next->begin();
+        unsigned len = overlay->size();
+        if (len > next->size()) len = next->size();
+        // Measure overlay energy and base signal energy before applying
+        float overlayEnergy = 0, baseEnergy = 0;
+        {
+          signalVector::iterator s = overlay->begin();
+          radioVector::iterator d = next->begin();
+          for (unsigned i = 0; i < len; i++) {
+            overlayEnergy += s->real()*s->real() + s->imag()*s->imag();
+            baseEnergy += d->real()*d->real() + d->imag()*d->imag();
+            s++; d++;
+          }
+        }
+        for (unsigned i = 0; i < len; i++) {
+          *dst = complex(dst->real() + src->real(), dst->imag() + src->imag());
+          dst++; src++;
+        }
+        // Measure combined energy after applying
+        float combinedEnergy = 0;
+        {
+          radioVector::iterator d = next->begin();
+          for (unsigned i = 0; i < len; i++) {
+            combinedEnergy += d->real()*d->real() + d->imag()*d->imag();
+            d++;
+          }
+        }
+        LOG(INFO) << "Applied AICH overlay at " << now
+                   << " overlayE=" << overlayEnergy
+                   << " baseE=" << baseEnergy
+                   << " combinedE=" << combinedEnergy
+                   << " sample[0]=(" << next->begin()->real() << "," << next->begin()->imag() << ")";
+        delete overlay;
+        mAICHOverlays.erase(it);
+      }
+    }
     mRadioInterface->driveTransmitRadio(*(next), false);
     delete next;
     return;
+  }
+
+  // Check for missed overlays (slot had no radioVector to overlay onto)
+  {
+    ScopedLock lock(mAICHOverlayLock);
+    auto it = mAICHOverlays.find(now);
+    if (it != mAICHOverlays.end()) {
+      LOG(INFO) << "AICH overlay MISSED (no burst) at " << now;
+      delete it->second;
+      mAICHOverlays.erase(it);
+    }
   }
 
   // Extremely rare that we get here. We need to send a blank burst to the
@@ -217,147 +236,67 @@ void Transceiver::pushRadioVector(UMTS::Time &now)
   mRadioInterface->driveTransmitRadio(*(mEmptyTransmitBurst), true);
 }
 
+void Transceiver::queueAICHOverlay(signalVector *overlay, UMTS::Time targetTime)
+{
+  ScopedLock lock(mAICHOverlayLock);
+  // Replace any existing overlay for this slot (shouldn't happen normally)
+  auto it = mAICHOverlays.find(targetTime);
+  if (it != mAICHOverlays.end()) {
+    delete it->second;
+    mAICHOverlays.erase(it);
+  }
+  mAICHOverlays[targetTime] = overlay;
+  LOG(INFO) << "Queued AICH overlay for " << targetTime;
+}
+
 void Transceiver::reset()
 {
   mTransmitPriorityQueue.clear();
 }
 
-void Transceiver::driveControl()
+/*
+ * Direct control interface methods (replaces UDP control socket)
+ */
+bool Transceiver::powerOn()
 {
-  int MAX_PACKET_LENGTH = 100;
-
-  // check control socket
-  char buffer[MAX_PACKET_LENGTH];
-  int msgLen = -1;
-  buffer[0] = '\0';
-
-  msgLen = mControlSocket.read(buffer, 1000);
-
-  if (msgLen < 1)
-    return;
-
-  char cmdcheck[4];
-  char command[MAX_PACKET_LENGTH];
-  char response[MAX_PACKET_LENGTH];
-
-  sscanf(buffer, "%3s %s", cmdcheck, command);
-
-  writeClockInterface();
-
-  if (strcmp(cmdcheck, "CMD") != 0) {
-    LOG(WARNING) << "bogus message on control interface";
-    return;
-  }
-  LOG(NOTICE) << "command is " << buffer;
-
-  if (!strcmp(command, "POWEROFF")) {
-    stop();
-    sprintf(response, "RSP POWEROFF 0");
-  }
-  else if (!strcmp(command, "POWERON")) {
-    if (!start())
-      sprintf(response, "RSP POWERON 1");
-    else
-      sprintf(response, "RSP POWERON 0");
-  }
-  else if (!strcmp(command, "SETRXGAIN")) {
-    int newGain;
-    sscanf(buffer, "%3s %s %d", cmdcheck, command, &newGain);
-    newGain = mRadioInterface->setRxGain(newGain);
-    sprintf(response, "RSP SETRXGAIN 0 %d", newGain);
-  }
-  else if (!strcmp(command, "SETTXATTEN")) {
-    int power;
-    sscanf(buffer, "%3s %s %d", cmdcheck, command, &power);
-    mPower = mRadioInterface->setPowerAttenuation(power);
-    sprintf(response, "RSP SETTXATTEN 0 %d", mPower);
-  }
-  else if (!strcmp(command, "SETFREQOFFSET")) {
-      sprintf(response, "RSP SETFREQOFFSET 1");
-  }
-  else if (!strcmp(command, "SETPOWER")) {
-    int power;
-    sscanf(buffer, "%3s %s %d", cmdcheck, command, &power);
-    mPower = mRadioInterface->setPowerAttenuation(power);
-    sprintf(response, "RSP SETPOWER 0 %d", mPower);
-  }
-  else if (!strcmp(command, "ADJPOWER")) {
-    int step;
-    sscanf(buffer, "%3s %s %d", cmdcheck, command, &step);
-    mPower = mRadioInterface->setPowerAttenuation(mPower + step);
-    sprintf(response, "RSP ADJPOWER 0 %d", mPower);
-  }
-  else if (!strcmp(command, "RXTUNE")) {
-    int freqkhz;
-    sscanf(buffer, "%3s %s %d", cmdcheck, command, &freqkhz);
-    if (!mRadioInterface->tuneRx(freqkhz * 1e3)) {
-       LOG(ALERT) << "RX failed to tune";
-       sprintf(response, "RSP RXTUNE 1 %d", freqkhz);
-    }
-    else
-       sprintf(response, "RSP RXTUNE 0 %d", freqkhz);
-  }
-  else if (!strcmp(command, "TXTUNE")) {
-    int freqkhz;
-    sscanf(buffer, "%3s %s %d", cmdcheck, command, &freqkhz);
-    if (!mRadioInterface->tuneTx(freqkhz * 1e3)) {
-       LOG(ALERT) << "TX failed to tune";
-       sprintf(response, "RSP TXTUNE 1 %d", freqkhz);
-    }
-    else
-       sprintf(response, "RSP TXTUNE 0 %d", freqkhz);
-  }
-  else if (!strcmp(command, "SETFREQOFFSET")) {
-      sprintf(response, "RSP SETFREQOFFSET 1");
-  }
-  else {
-    LOG(WARNING) << "bogus command " << command << " on control interface.";
-  }
-
-  LOG(DEBUG) << "response: " << response;
-  mControlSocket.write(response, strlen(response) + 1);
+  return start();
 }
 
-bool Transceiver::driveTransmitPriorityQueue()
+void Transceiver::powerOff()
 {
-  char buffer[MAX_UDP_LENGTH];
-
-  // check data socket
-  int msgLen = mDataSocket.read(buffer, 1000);
-  if (msgLen < 0)
-    return false;
-
-  if (msgLen != 2 * UMTS::gSlotLen + 4) {
-    LOG(ERR) << "badly formatted packet on UMTS->TRX interface";
-    return false;
-  }
-
-  int timeSlot = (int) buffer[0];
-  uint16_t frameNum = 0;
-  for (int i = 0; i < 2; i++)
-    frameNum = (frameNum << 8) | (0x0ff & buffer[i + 1]);
-
-  static signalVector newBurst(UMTS::gSlotLen);
-  signalVector::iterator itr = newBurst.begin();
-  signed char *bufferItr = (signed char *) (buffer + 3);
-
-  while (itr < newBurst.end()) {
-    *itr++ = complex((float) *(bufferItr + 0),
-                     (float) *(bufferItr + 1));
-    bufferItr++;
-    bufferItr++;
-  }
-
-  UMTS::Time currTime = UMTS::Time(frameNum, timeSlot);
-  addRadioVector(newBurst, currTime);
-
-  return true;
+  stop();
 }
 
+int Transceiver::setRxGain(int dB)
+{
+  return (int) mRadioInterface->setRxGain((double) dB);
+}
+
+int Transceiver::setPower(int dB)
+{
+  mPower = mRadioInterface->setPowerAttenuation(dB);
+  return mPower;
+}
+
+bool Transceiver::tuneTx(int freqKHz)
+{
+  return mRadioInterface->tuneTx(freqKHz * 1e3);
+}
+
+bool Transceiver::tuneRx(int freqKHz)
+{
+  return mRadioInterface->tuneRx(freqKHz * 1e3);
+}
+
+/*
+ * Receive path: pull from RadioInterface, deliver directly to RadioModem
+ *
+ * This replaces the old UDP serialization path. Data flows:
+ * RadioInterface::driveReceiveRadio -> mReceiveFIFO -> here -> RadioModem::receiveSlot
+ */
 void Transceiver::driveReceiveFIFO()
 {
   radioVector *rxBurst = NULL;
-  int RSSI = 0;
   UMTS::Time burstTime;
 
   mRadioInterface->driveReceiveRadio(1024 + mDelaySpread);
@@ -367,34 +306,23 @@ void Transceiver::driveReceiveFIFO()
     return;
 
   burstTime = rxBurst->time();
-  size_t burstSize = 2 * rxBurst->size() + 3 + 1 + 1;
-  char burstString[burstSize];
 
-  burstString[0] = burstTime.TN();
-  for (size_t i = 0; i < 2; i++)
-    burstString[1 + i] = (burstTime.FN() >> ((1 - i) * 8)) & 0x0ff;
+  // Pass received samples directly to RadioModem without transformation.
+  // radioVector inherits from signalVector; copy to local so we can delete rxBurst.
+  signalVector dataBurst(*rxBurst);
 
-  burstString[3] = RSSI;
-  radioVector::iterator burstItr = rxBurst->begin();
-  char *burstPtr = burstString + 4;
-
-  for (size_t i = 0; i < UMTS::gSlotLen + 1024 + mDelaySpread; i++) {
-    *burstPtr++ = (char)  (int8_t) burstItr->real();
-    *burstPtr++ = (char) -(int8_t) burstItr->imag();
-    burstItr++;
-  }
-
-  burstString[burstSize - 1] = '\0';
   delete rxBurst;
 
   if (!burstTime.TN() && !(burstTime.FN() % CLK_IND_INTERVAL))
     writeClockInterface();
 
-  mDataSocket.write(burstString, burstSize);
+  // Deliver directly to RadioModem (no UDP)
+  if (mRadioModem)
+    mRadioModem->receiveSlot(&dataBurst, burstTime);
 }
 
 /*
- * Features a carefully controlled latency mechanism, to 
+ * Features a carefully controlled latency mechanism, to
  * assure that transmit packets arrive at the radio
  * before they need to be transmitted.
  *
@@ -412,40 +340,25 @@ void Transceiver::driveTransmitFIFO()
   radioClock->wait();
 
   while (radioClock->get() + mTransmitLatency > mTransmitDeadlineClock) {
-    // if underrun, then we're not providing bursts to radio fast
-    //   enough.  Need to increase latency by one UMTS frame.
+    // Dynamic latency adjustment for PCIeSDR.
+    // Keep latency minimal (4-8 slots) for spec-compliant AICH timing.
     if (mRadioInterface->getWindowType() == RadioDevice::TX_WINDOW_PCIE) {
       if (mRadioInterface->isUnderrun()) {
-        // only do latency update every 10 frames, so we don't over update
         if (radioClock->get() > mLatencyUpdateTime + UMTS::Time(10, 0)) {
-          mTransmitLatency = mTransmitLatency + UMTS::Time(1, 0);
-          if (mTransmitLatency > UMTS::Time(15, 0))
-            mTransmitLatency = UMTS::Time(15, 0);
+          mTransmitLatency = mTransmitLatency + UMTS::Time(0, 2);
+          if (mTransmitLatency > UMTS::Time(0, 8))
+            mTransmitLatency = UMTS::Time(0, 8);
 
           LOG(INFO) << "new latency: " << mTransmitLatency;
           mLatencyUpdateTime = radioClock->get();
         }
       } else {
-        // if underrun hasn't occurred in the last sec (100 frames) drop
-        //    transmit latency by a timeslot
-        if (mTransmitLatency > UMTS::Time(1, 0)) {
-          if (radioClock->get() > mLatencyUpdateTime + UMTS::Time(100, 0)) {
-            if (PCIESDRRadioSync == 0)
-            {
-              for(int i = 0; i < 44; i++) // tested with SDR50
-              {
-                mTransmitLatency.decTN();
-                LOG(INFO) << "reduced latency loop: " << mTransmitLatency;
-                mLatencyUpdateTime = radioClock->get();
-              }
-              PCIESDRRadioSync++;
-            }
-            else
-            {
-              mTransmitLatency.decTN();
-              LOG(INFO) << "reduced latency: " << mTransmitLatency;
-              mLatencyUpdateTime = radioClock->get();
-            }
+        // if no underrun in 50 frames, reduce latency by 1 slot
+        if (mTransmitLatency > UMTS::Time(0, 4)) {
+          if (radioClock->get() > mLatencyUpdateTime + UMTS::Time(50, 0)) {
+            mTransmitLatency.decTN();
+            LOG(INFO) << "reduced latency: " << mTransmitLatency;
+            mLatencyUpdateTime = radioClock->get();
           }
         }
       }
@@ -457,16 +370,16 @@ void Transceiver::driveTransmitFIFO()
   }
 }
 
+/*
+ * Update gNodeB clock directly (replaces UDP clock socket).
+ * Previously this serialized "IND CLOCK <FN>" over a UDP socket.
+ * Now it updates gNodeB.clock() in-process.
+ */
 void Transceiver::writeClockInterface()
 {
-  char command[50];
+  unsigned FN = (unsigned)(mTransmitDeadlineClock.FN() + 1);
 
-  sprintf(command, "IND CLOCK %llu",
-          (unsigned long long) (mTransmitDeadlineClock.FN() + 8));
-
-  LOG(INFO) << "ClockInterface: sending " << command;
-
-  mClockSocket.write(command, strlen(command) + 1);
+  gNodeB.clock().setFN(FN);
   mLastClockUpdateTime = mTransmitDeadlineClock;
 }
 
@@ -483,24 +396,6 @@ void *TxServiceLoopAdapter(Transceiver *transceiver)
 {
   while (1) {
     transceiver->driveTransmitFIFO();
-    pthread_testcancel();
-  }
-  return NULL;
-}
-
-void *ControlServiceLoopAdapter(Transceiver *transceiver)
-{
-  while (1) {
-    transceiver->driveControl();
-    pthread_testcancel();
-  }
-  return NULL;
-}
-
-void *TransmitPriorityQueueServiceLoopAdapter(Transceiver *transceiver)
-{
-  while (1) {
-    transceiver->driveTransmitPriorityQueue();
     pthread_testcancel();
   }
   return NULL;

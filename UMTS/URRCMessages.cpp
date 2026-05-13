@@ -1936,6 +1936,9 @@ void handleRrcConnectionRequest(BitVector &tb, ASN::RRCConnectionRequest_t *msg)
 	}
 	asnLogMsg(0, &ASN::asn_DEF_RRCConnectionRequest, msg,comment,uep);
 
+	LOG(INFO) << "RRC ConnectionRequest received: UE=" << uep->ueid()
+	          << (isNew ? " (NEW UE)" : " (EXISTING UE - re-RACH)");
+
 	// (pat 12-18-2012) If we get this it means the UE dropped into idle mode possibly
 	// without telling us, so fix that:
 	// FIXME: What about CELL_PCH or CELL_URA
@@ -2002,7 +2005,7 @@ void handleRrcConnectionRequest(BitVector &tb, ASN::RRCConnectionRequest_t *msg)
 
 void continueRrcConnectionSetup(UEInfo *uep)
 {
-	LOG(INFO) << uep << ": Continue connection setup";
+	LOG(INFO) << "sending RRC Connection Setup: UE=" << uep->ueid();
 	AsnUeId asnUeId = uep->mUid;
 	sendRrcConnectionSetupDCH(uep,&asnUeId.UeInitialId());
 }

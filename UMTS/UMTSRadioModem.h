@@ -33,7 +33,14 @@
 
 extern ConfigurationTable gConfig;
 
-static const int MAX_DCH_THREADS = 8;
+// Plain #define so it's visible from any namespace context without
+// requiring the `UMTS::` prefix; matches the SLOTS_PER_FRAME pattern above.
+#define MAX_DCH_THREADS 8
+
+// Forward declaration: Transceiver is in the global namespace
+// (TransceiverPCIeSDR/Transceiver.h). RadioModem holds a pointer to it
+// for in-process TX delivery (replaces UDP socket writes).
+class Transceiver;
 
 namespace UMTS {
 
@@ -218,10 +225,15 @@ public:
 
 
 	signalVector *mPreallocBurst;  // pre-allocated burst for receiveBurst()
-	UDPSocket& mDataSocket;
+
+	// In-process Transceiver pointer (set after construction via
+	// setTransceiver()).  When non-NULL, TX bursts are delivered via
+	// mTransceiver->addRadioVector() instead of a UDP socket write.
+	::Transceiver *mTransceiver;
 
 
-        RadioModem(UDPSocket& wDataSocket);
+        RadioModem();
+        void setTransceiver(::Transceiver *trx) { mTransceiver = trx; }
 
         /* (pointer to channel map,
                     map of scrambling codes,
@@ -238,6 +250,11 @@ public:
 	// receive burst from UDP packet
         void receiveBurst(void);
 
+        // Receive slot directly from Transceiver (in-process integration:
+        // Transceiver::driveReceiveFIFO calls this instead of pushing
+        // samples via UDP; replaces the receiveBurst() UDP path).
+        void receiveSlot(signalVector *wBurst, UMTS::Time wTime);
+
         /*struct FECDispatchInfo {
                 DCHFEC *fec;
                 RxBitsBurst *burst;
@@ -251,7 +268,7 @@ public:
         friend void *RACHLoopAdapter(RadioModem*);
         friend void *DCHLoopAdapter(DCHLoopInfo*);
 
-        static constexpr float mRACHThreshold = 10.0;
+        static constexpr float mRACHThreshold = 18.0;
 
 private:
 
@@ -320,9 +337,7 @@ private:
         // Base configuration values
         int mRACHBaseSignature;
 
-	// receive data
-        void receiveSlot (signalVector *wBurst, UMTS::Time wTime);
-
+        // (receiveSlot moved to public section above for in-process Transceiver access)
 
         // map between a hash and an array of 15 signalVectors of varying length
         // hash function is (scramblingcode*6)+nP
@@ -461,6 +476,13 @@ private:
 
 	/* Decode expected RACH message */
         bool decodeRACHMessage(signalVector &wBurst, UMTS::Time wTime, float detectionThreshold);
+
+        // Build a fully-formed AICH slot waveform (spread + scrambled,
+        // int8-quantized) for direct overlay onto an already-composited
+        // radio vector. Used when the AICH target slot has already passed
+        // through transmitSlot (which happens routinely in the in-process
+        // integration where transmitSlot runs only a few slots ahead of RX).
+        signalVector* buildAICHWaveform(const BitVector &bits, UMTS::Time slotTime);
 
         /* Decode expected DCH burst */
         bool decodeDCH(signalVector &wBurst,

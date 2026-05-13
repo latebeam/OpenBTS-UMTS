@@ -263,7 +263,7 @@ bool PCIeSDRDevice::flush_recv(size_t num_pkts)
 	if (rc < 0)
 		return false;
 
-	ts_initial = (TIMESTAMP)timestamp_tmp + rc;
+	ts_initial = (PCIE_TIMESTAMP)timestamp_tmp + rc;
 
 	LOG(INFO) << "PCIESDRDevice flush done";
 
@@ -380,7 +380,7 @@ int PCIeSDRDevice::readSamples(short *buf, int len, bool *overrun,
 {
 	int rc, num_smpls, expect_smpls;
 	ssize_t avail_smpls;
-	TIMESTAMP expect_timestamp;
+	PCIE_TIMESTAMP expect_timestamp;
 	static sample_t samples[PSAMPLES_NUM];
 	static sample_t *psamples;
 	int64_t timestamp_tmp;
@@ -453,12 +453,12 @@ int PCIeSDRDevice::readSamples(short *buf, int len, bool *overrun,
 								<< ", expTs:" << expect_timestamp << " got " << timestamp_tmp;
 		}
 
-		if (expect_timestamp != (TIMESTAMP)timestamp_tmp) {
+		if (expect_timestamp != (PCIE_TIMESTAMP)timestamp_tmp) {
 			LOG(ERR) << "Unexpected recv buffer timestamp: expect "
 								<< expect_timestamp << " got " << timestamp_tmp
 								<< ", diff=" << timestamp_tmp - expect_timestamp;
 		}
-		rc = rx_buffer->write(buf, num_smpls, (TIMESTAMP)timestamp_tmp);
+		rc = rx_buffer->write(buf, num_smpls, (PCIE_TIMESTAMP)timestamp_tmp);
 		if (rc < 0) {
 			if (rc != SampleBuffer::ERROR_OVERFLOW) {
 				return 0;
@@ -576,4 +576,14 @@ bool PCIeSDRDevice::recv_async_msg()
 {
 	LOG(ALERT) << "recv_async_msg";
 	return true;
+}
+
+RadioDevice *RadioDeviceCreate(double rate, const std::string &args, bool extref, int index)
+{
+	PCIeSDRDevice *dev = new PCIeSDRDevice(rate);
+	if (!dev->open(args, extref, index)) {
+		delete dev;
+		return NULL;
+	}
+	return dev;
 }

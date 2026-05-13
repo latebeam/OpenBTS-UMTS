@@ -18,6 +18,8 @@ ACLOCAL_AMFLAGS = -I config
 # Order must be preserved.
 # third_party/libfec MUST come before CommonLibs because libcommon.a links
 # against the vendored libfec.a.
+# Transceiver is linked in-process into OpenBTS-UMTS via libumtstransceiver.la
+# from TransceiverPCIeSDR/. RAD1 and UHD transceivers are no longer built.
 SUBDIRS = \
 	config \
 	third_party/libfec \
@@ -30,8 +32,6 @@ SUBDIRS = \
 	UMTS \
 	SGSNGGSN \
 	SMS \
-	TransceiverRAD1 \
-	TransceiverUHD \
 	TransceiverPCIeSDR \
 	TRXManager \
 	Control \
@@ -49,8 +49,5 @@ EXTRA_DIST = \
 
 install: all
 	$(MAKE) -C ./apps install
-	$(MAKE) -C ./TransceiverRAD1 install
-	$(MAKE) -C ./TransceiverUHD install
-	$(MAKE) -C ./TransceiverPCIeSDR install
 
 FORCE:

@@ -22,6 +22,8 @@
 #ifndef __RADIO_DEVICE_H__
 #define __RADIO_DEVICE_H__
 
+#include <string>
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -114,5 +116,15 @@ class RadioDevice {
   virtual double numberRead()=0;
   virtual double numberWritten()=0;
 };
+
+/**
+  Factory function to create and open a radio device.
+  @param rate Sample rate.
+  @param args Device address hint.
+  @param extref Use external reference clock.
+  @param index Transceiver index.
+  @return Opened device, or NULL on failure.
+*/
+RadioDevice *RadioDeviceCreate(double rate, const std::string &args, bool extref, int index);
 
 #endif /* __RADIO_DEVICE_H__ */

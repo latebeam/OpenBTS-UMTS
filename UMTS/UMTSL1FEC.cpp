@@ -1002,12 +1002,18 @@ void TrCHFECDecoder::countBadFrame()
 //void TrCHFECEncoder::waitToSend() const
 void TrCHFECEncoder::l1WaitToSend() const
 {
-	// Block until the NodeB clock catches up to the
-	// mostly recently transmitted burst.
-	//LOG(INFO) << "mPrevWriteTime: " << mPrevWriteTime << ", " << mNextWriteTime;
-	// (pat) TODO: Add Transceiver.mTransmitLatency in here.
+	// Block until the NodeB clock catches up to the most recently transmitted
+	// burst.  If the clock has been reset (Transceiver stop/start), the saved
+	// mPrevWriteTime can appear "in the past" by wraparound, making wait()
+	// return immediately and the caller spin generating bursts at stale FNs
+	// — overflowing the Tx queue.  Detect that case and resync.
+	int16_t delta = FNDelta(mPrevWriteTime.FN(), gNodeB.clock().FN());
+	if (delta < -1) {
+		// More than one frame behind via wraparound — clock was reset.
+		const_cast<TrCHFECEncoder*>(this)->mPrevWriteTime = gNodeB.clock().get();
+		const_cast<TrCHFECEncoder*>(this)->mNextWriteTime = gNodeB.clock().get();
+	}
 	gNodeB.clock().wait(mPrevWriteTime);
-	//LOG(NOTICE) << "waitToSend "<<when<<" clock="<<gNodeB.clock().FN();
 }
 
 

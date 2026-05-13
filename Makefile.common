@@ -50,9 +50,7 @@ NODEMANAGER_INCLUDEDIR = $(top_srcdir)/NodeManager
 JSONBOX_INCLUDEDIR = $(top_srcdir)/NodeManager/JsonBox-0.4.3/include
 LIBFEC_INCLUDEDIR = $(top_srcdir)/third_party/libfec
 
-# default to TranceiverRAD1
-#TRANSCEIVER_INCLUDEDIR = $(top_srcdir)/TransceiverRAD1
-
+# Transceiver is now linked in-process; only PCIeSDR backend is supported.
 TRANSCEIVER_INCLUDEDIR = $(top_srcdir)/TransceiverPCIeSDR
 PCIESDR_INCLUDEDIR = $(PCIESDR_TRX_DIR)
 
@@ -73,7 +71,8 @@ STD_DEFINES_AND_INCLUDES = \
 	-I$(CLI_INCLUDEDIR) \
 	-I$(NODEMANAGER_INCLUDEDIR) \
 	-I$(JSONBOX_INCLUDEDIR) \
-	-I$(LIBFEC_INCLUDEDIR)
+	-I$(LIBFEC_INCLUDEDIR) \
+	-I$(TRANSCEIVER_INCLUDEDIR)
 
 LIBFEC_A  = $(top_builddir)/third_party/libfec/libfec.a
 COMMON_LA = $(top_builddir)/CommonLibs/libcommon.la $(LIBFEC_A)
@@ -87,7 +86,7 @@ TRX_LA = $(top_builddir)/TRXManager/libtrxmanager.la
 CONTROL_LA = $(top_builddir)/Control/libcontrol.la
 GLOBALS_LA = $(top_builddir)/Globals/libglobals.la
 CLI_LA = $(top_builddir)/CLI/libcli.la
-TRANSCEIVER_LA = $(top_builddir)/TransceiverRAD1/libumtstransceiver.la
+TRANSCEIVER_LA = $(top_builddir)/TransceiverPCIeSDR/libumtstransceiver.la
 NODEMANAGER_LA = $(top_builddir)/NodeManager/libnodemanager.la -lzmq
 
 MOSTLYCLEANFILES = *~

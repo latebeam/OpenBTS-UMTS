@@ -58,8 +58,19 @@ extern "C" {
 /* Chunk multiplier with resampler rates determine the chunk sizes */
 #define CHUNK_MUL                  2
 
-/* Universal resampling parameters */
-#define NUMCHUNKS                  32
+/* Universal resampling parameters.
+ * NUMCHUNKS controls how many frame-sized chunks the SDR<->Transceiver
+ * buffer holds.  Each chunk is ~10 ms.  Lower values give tighter TX/RX
+ * lookahead so AICH and FACH bursts land in their target slot before
+ * transmitSlot composites them; higher values give more throughput
+ * headroom but can cause RACH-response bursts (RrcConnectionSetup on
+ * FACH) to be discarded as "slot already past" if MAC scheduling is
+ * slower than the lookahead.
+ *   8  = tight timing, more underrun-prone (4 underruns at startup)
+ *  16 = compromise — twice the underrun headroom, AICH dual-path still works
+ *  32 = larger headroom, but RACH response delivery problems observed
+ */
+#define NUMCHUNKS                  16
 
 /* Receive scaling factor for 16 to 8 bits */
 #define CONVERT_RX_SCALE           (128.0 / 32768.0)

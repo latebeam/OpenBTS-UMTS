@@ -37,6 +37,11 @@ ConfigurationTable gConfig("./OpenBTS-UMTS.db","OpenBTS-UMTS", getConfigurationK
 #include <string.h>
 #include <signal.h>
 
+// PCIeSDR transceiver (integrated in-process — replaces forked transceiver binary).
+#include "PCIeSDRDevice.h"
+#include "RadioInterface.h"
+#include "Transceiver.h"
+
 #ifdef HAVE_LIBREADLINE // [
 //#  include <stdio.h>
 #  include <readline/readline.h>
@@ -89,27 +94,46 @@ void purgeConfig(void*,int,char const*, char const*, sqlite3_int64)
 	gNodeB.regenerateBeacon();
 }
 
-const char* transceiverPath = "./transceiver";
+/* PCIeSDR device sample rate */
+#define DEVICE_RATE               6.25e6
 
-pid_t gTransceiverPid = 0;
+/* Default maximum expected delay spread in symbols */
+#define DEFAULT_MAX_DELAY         50
 
-void startTransceiver(int transceiverIndex)
+/* Optional expected delay spread (default 50 symbols) */
+static int getMaxDelay()
 {
-	// Start the transceiver binary, if the path is defined.
-	// If the path is not defined, the transceiver must be started by some other process.
-	char TRXnumARFCN[4];
-	sprintf(TRXnumARFCN,"%1d",(int)gConfig.getNum("UMTS.Radio.ARFCNs"));
-	char TRXIndex[4];
-	sprintf(TRXIndex,"%3d",transceiverIndex);
-	LOG(NOTICE) << "starting transceiver " << transceiverPath << " " << TRXnumARFCN;
-	gTransceiverPid = vfork();
-	LOG_ASSERT(gTransceiverPid>=0);
-	if (gTransceiverPid==0) {
-		// Pid==0 means this is the process that starts the transceiver.
-		execlp(transceiverPath,transceiverPath,TRXnumARFCN,TRXIndex,NULL);
-		LOG(EMERG) << "cannot find " << transceiverPath;
-		_exit(1);
+	int max_delay;
+	try {
+		max_delay = gConfig.getNum("UMTS.Radio.MaxExpectedDelaySpread");
+	} catch (ConfigurationTableKeyNotFound e) {
+		max_delay = DEFAULT_MAX_DELAY;
 	}
+	return max_delay;
+}
+
+/* Optional external reference enable (default off) */
+static bool getExtRef()
+{
+	int enable;
+	try {
+		enable = gConfig.getNum("TRX.Reference");
+	} catch (ConfigurationTableKeyNotFound e) {
+		enable = 0;
+	}
+	return enable != 0;
+}
+
+/* Optional device hint (default none) */
+static std::string getDevAddr()
+{
+	std::string addr;
+	try {
+		addr = gConfig.getStr("UMTS.Radio.UHD.DeviceAddress");
+	} catch (ConfigurationTableKeyNotFound e) {
+		addr = "";
+	}
+	return addr;
 }
 
 // Returns tranceiver index
@@ -204,10 +228,12 @@ int main(int argc, char *argv[])
 
 	gRANControl.start();
 
+	PCIeSDRDevice *sdr_device = NULL;
+	RadioInterface *radio = NULL;
+	Transceiver *trx = NULL;
+
 	try {
 	COUT("\n\n" << gOpenWelcome << "\n");
-
-	gTRX.TransceiverManagerInit(gConfig.getNum("UMTS.Radio.ARFCNs"), gConfig.getStr("TRX.IP").c_str(), gConfig.getNum("TRX.Port"));
 
 	srandom(time(NULL));
 
@@ -215,20 +241,59 @@ int main(int argc, char *argv[])
 	gLogInit("openbts-umts",gConfig.getStr("Log.Level").c_str(),LOG_LOCAL7);
 	LOG(ALERT) << "OpenBTS-UMTS (re)starting, ver " << VERSION << " build date " << __DATE__;
 
-	//verify(argv[0]);
 	gParser.addCommands();
+
+	/*
+	 * Initialize PCIeSDR transceiver in-process (replaces fork/exec of separate transceiver binary).
+	 * This eliminates the 3 UDP sockets (data, control, clock) and enables direct
+	 * function calls between RadioModem and Transceiver for spec-compliant RACH timing.
+	 */
+	int max_delay = getMaxDelay();
+	bool extref = getExtRef();
+	std::string devaddr = getDevAddr();
+
+	if (extref) {
+		COUT("** Using external clock reference" << endl);
+	} else {
+		COUT("** Using internal clock reference" << endl);
+	}
+
+	COUT("** Searching for PCIeSDR device " << devaddr << endl);
+	sdr_device = new PCIeSDRDevice(DEVICE_RATE);
+	bool found = sdr_device->open(devaddr, extref, transceiverIndex);
+
+	if (found) {
+		COUT("** PCIeSDR device ready" << endl);
+	} else {
+		COUT("** PCIeSDR device not available" << endl);
+		LOG(EMERG) << "PCIeSDR device not found, aborting";
+		exit(1);
+	}
+
+	radio = new RadioInterface((RadioDevice *) sdr_device, 0);
+	if (!radio->init()) {
+		COUT("** Radio interface failed to initialize" << endl);
+		LOG(EMERG) << "RadioInterface init failed, aborting";
+		exit(1);
+	}
+
+	trx = new Transceiver(UMTS::Time(0, 4), radio);
+	trx->receiveFIFO(radio->receiveFIFO());
+	trx->init(max_delay);
+
+	/*
+	 * Initialize TRXManager with direct pointers (no UDP sockets).
+	 * The RadioModem <-> Transceiver connection is established inside ARFCNManager constructor.
+	 */
+	gTRX.TransceiverManagerInit(gConfig.getNum("UMTS.Radio.ARFCNs"), trx, radio);
 
 	COUT("\nStarting the system...");
         ARFCNManager* downstreamRadio = gTRX.ARFCN(0);
-	gNodeB.init(downstreamRadio);	// (pat) Nicer to test the beacon config before starting the transceiver.
+	gNodeB.init(downstreamRadio);
 
 	// (pat) DEBUG: Run these tests on startup.
 	if (testmode) { UMTS::testCCProgramming(); return 0; }
 
-	COUT("Starting the transceiver..." << endl);	// (pat) 11-9-2012 Taking this out causes OpenBTS-UMTS to malfunction!  Intermittently.
-	//LOG(INFO) << "Starting the transceiver...";
-	startTransceiver(transceiverIndex);	// (pat) This is now a no-op because transceiver is built-in.
-	sleep(1);
 	// Start the SIP interface.
 	LOG(INFO) << "Starting the SIP interface...";
 	gSIPInterface.start();

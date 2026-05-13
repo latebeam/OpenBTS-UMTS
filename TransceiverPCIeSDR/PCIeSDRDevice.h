@@ -41,7 +41,7 @@ extern "C" {
 #include <chrono>
 
 
-typedef unsigned long long TIMESTAMP;
+typedef unsigned long long PCIE_TIMESTAMP;
 
 class PCIeSDRDevice : public RadioDevice {
 public:
@@ -126,7 +126,7 @@ private:
 	bool skipRx;			///< set if device is transmit-only.
 
 
-	TIMESTAMP ts_initial, ts_offset;
+	PCIE_TIMESTAMP ts_initial, ts_offset;
 
 	std::vector<double> tx_gains, rx_gains;
 	int64_t tx_underflow;

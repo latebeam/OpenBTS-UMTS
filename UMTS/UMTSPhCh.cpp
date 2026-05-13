@@ -18,6 +18,14 @@
 #include "UMTSRadioModem.h"
 #include "UMTSConfig.h"
 
+// Belt-and-braces: MAX_DCH_THREADS is defined in UMTSRadioModem.h, but if
+// some include-path / sync issue prevents that from reaching here, the
+// build still works. Has no effect when the header definition is found
+// (identical value, identical macro name).
+#ifndef MAX_DCH_THREADS
+#define MAX_DCH_THREADS 8
+#endif
+
 #include "asn_system.h"
 namespace ASN {
 //#include "UL-DPCH-Info.h"

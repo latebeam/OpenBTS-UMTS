@@ -80,8 +80,8 @@ signalVector *rcvInverseCICFilter;
 signalVector *txHistoryVector;
 signalVector *rxHistoryVector;
 
-RadioModem::RadioModem(UDPSocket& wDataSocket)
-	:mDataSocket(wDataSocket)
+RadioModem::RadioModem()
+	:mTransceiver(NULL)
 {
   sigProcLibSetup(1);
   mUplinkPilotWaveformMap.clear();
@@ -819,29 +819,48 @@ bool RadioModem::detectRACHPreamble(signalVector &wBurst, UMTS::Time wTime, floa
     int controlSpreadingCodeIndex = 16*j + 15;
     int dataSpreadingCodeIndex = (gConfig.getNum("UMTS.PRACH.SF") * j) / 16;
 
-    // Calculate AICH response time
+    // AICH must reach the UE in its short listen window (UMTS TS 25.211:
+    // ~2 access slots after the preamble).  In-process integration runs
+    // transmitSlot only a few slots ahead of RX, so the AICH target slot
+    // may already have been composited by transmitSlot by the time we
+    // get here.  Two paths:
+    //   Path A (slot not yet composited): normal addBurst into TX queue.
+    //   Path B (slot already composited): overlay onto the queued
+    //          radioVector via Transceiver::queueAICHOverlay().
     UMTS::Time mAICHResponseTime = wTime;
-    while (mAICHResponseTime <= mLastTransmitTime + UMTS::Time(0,2)) {
-      mAICHResponseTime = mAICHResponseTime + UMTS::Time(2,0);
-    }
+    UMTS::Time aichSlot1 = mAICHResponseTime + UMTS::Time(0,1);
+    bool slot0Past = (mAICHResponseTime <= mLastTransmitTime);
+    bool slot1Past = (aichSlot1            <= mLastTransmitTime);
 
-    // Send AICH ACK preambles (congestion rejection is done later at the
-    // RRC layer via sendRrcConnectionReject with waitTime).
     bool dummy;
     Time uselessTime;
 
-    TxBitsBurst *out1 = new TxBitsBurst(gAICHSignatures[j].segment(0,20), 256,
-                                         mAICHSpreadingCodeIndex, mAICHResponseTime, false);
-    RN_MEMLOG(TxBitsBurst, out1);
-    out1->AICH(true);
-    addBurst(out1, dummy, uselessTime);
+    if (!slot0Past) {
+      TxBitsBurst *out1 = new TxBitsBurst(gAICHSignatures[j].segment(0,20), 256,
+                                           mAICHSpreadingCodeIndex, mAICHResponseTime, false);
+      RN_MEMLOG(TxBitsBurst, out1);
+      out1->AICH(true);
+      addBurst(out1, dummy, uselessTime);
+      if (dummy) { delete out1; slot0Past = true; }   // queue rejected: must overlay instead
+    }
+    if (slot0Past && mTransceiver) {
+      signalVector *overlay = buildAICHWaveform(gAICHSignatures[j].segment(0,20), mAICHResponseTime);
+      mTransceiver->queueAICHOverlay(overlay, mAICHResponseTime);
+    }
 
-    TxBitsBurst *out2 = new TxBitsBurst(gAICHSignatures[j].segment(20,12), 256,
-                                         mAICHSpreadingCodeIndex,
-                                         mAICHResponseTime + UMTS::Time(0,1), false);
-    RN_MEMLOG(TxBitsBurst, out2);
-    out2->AICH(true);
-    addBurst(out2, dummy, uselessTime);
+    if (!slot1Past) {
+      TxBitsBurst *out2 = new TxBitsBurst(gAICHSignatures[j].segment(20,12), 256,
+                                           mAICHSpreadingCodeIndex,
+                                           aichSlot1, false);
+      RN_MEMLOG(TxBitsBurst, out2);
+      out2->AICH(true);
+      addBurst(out2, dummy, uselessTime);
+      if (dummy) { delete out2; slot1Past = true; }
+    }
+    if (slot1Past && mTransceiver) {
+      signalVector *overlay = buildAICHWaveform(gAICHSignatures[j].segment(20,12), aichSlot1);
+      mTransceiver->queueAICHOverlay(overlay, aichSlot1);
+    }
 
     // Add to pending RACH messages queue
     {
@@ -935,6 +954,9 @@ bool RadioModem::decodeRACHMessage(signalVector &wBurst, UMTS::Time wTime, float
       TOA -= mRACHPilotsOffset;
 
       if (currentRACH.slotsDecoded < 3 && SNR < 5.0) {
+          LOG(INFO) << "RACH msg early-abort: sig=" << currentRACH.signature
+                    << " slot=" << slotIx << " SNR=" << SNR
+                    << " slotsDecoded=" << currentRACH.slotsDecoded;
           completedIndices.push_back(i);
           continue;
       }
@@ -1018,6 +1040,11 @@ bool RadioModem::decodeRACHMessage(signalVector &wBurst, UMTS::Time wTime, float
         }
 
         delete despreadRACHData;
+
+        LOG(INFO) << "RACH msg complete: sig=" << currentRACH.signature
+                  << " sub=" << currentRACH.subchannel
+                  << " avgTOA=" << currentRACH.avgTOA
+                  << " tfci=" << tfci;
 
         // Mark for removal
         completedIndices.push_back(i);
@@ -1401,35 +1428,50 @@ bool RadioModem::decodeDPDCHFrame(DPDCH &frame,
 
 void RadioModem::receiveBurst(void)
 {
-        char buffer[MAX_UDP_LENGTH];
-        int msgLen = mDataSocket.read(buffer);
+        // No-op: UDP RX path retired. Transceiver now pushes received
+        // slots directly into RadioModem::receiveSlot() via the
+        // in-process integration (see TransceiverPCIeSDR/Transceiver.cpp).
+}
 
-        if (msgLen<=0) SOCKET_ERROR;
+signalVector* RadioModem::buildAICHWaveform(const BitVector &bits, UMTS::Time slotTime)
+{
+  int slotIx = slotTime.TN();
 
-        // decode
-        unsigned char *rp = (unsigned char*)buffer;
-        // timeslot number
-        unsigned int TN = *rp++;
-        // frame number
-        int16_t FN = *rp++;
-        FN = (FN<<8) + (*rp++);
-        // soft symbols — use pre-allocated burst to avoid heap alloc.
-        // The old code did new/delete signalVector(3634) per slot =
-        // 1500 heap allocs/sec of 29KB each, causing fragmentation
-        // and variable latency on the receive thread.
-	unsigned int burstLen = gSlotLen+1024+mDelaySpread;
-	if (!mPreallocBurst || mPreallocBurst->size() != burstLen) {
-	  delete mPreallocBurst;
-	  mPreallocBurst = new signalVector(burstLen);
-	}
-  	complex *burstPtr = mPreallocBurst->begin();
-        for (unsigned int i=0; i<burstLen; i++) {
-	  *burstPtr++ = complex((float) ((radioData_t) (signed char) (*rp)),
-				(float) ((radioData_t) (signed char) (*(rp+1))));
-	  rp++; rp++;
-        }
-	receiveSlot(mPreallocBurst, UMTS::Time(FN,TN));
-	//bool underrun;
+  // Spread AICH bits with OVSF code (SF=256) into temp waveforms
+  radioData_t waveformI[gSlotLen];
+  radioData_t waveformQ[gSlotLen];
+  memset(waveformI, 0, sizeof(radioData_t) * gSlotLen);
+  memset(waveformQ, 0, sizeof(radioData_t) * gSlotLen);
+
+  // Use mCCPCHAmplitude to match the old Path A behaviour where AICH went
+  // through transmitSlot with non-DCH amplitude. mAICHAmplitude is too
+  // strong, would overwhelm other channels and the UE's receiver.
+  // spread() takes BitVector& (non-const); cast matches the pattern used
+  // elsewhere in this file (e.g. line ~369 with gRACHMessagePilots).
+  spread((BitVector &) bits,
+         (int8_t *) gOVSFTree.code(8, mAICHSpreadingCodeIndex),  // log2(256) = 8
+         256, waveformI, waveformQ, gSlotLen, mCCPCHAmplitude);
+
+  // Scramble with downlink scrambling code (slot-aligned)
+  radioData_t *scrambledI = NULL;
+  radioData_t *scrambledQ = NULL;
+  scramble(waveformI, waveformQ, gSlotLen,
+           mDownlinkAlignedScramblingCodeI + gSlotLen * slotIx,
+           mDownlinkAlignedScramblingCodeQ + gSlotLen * slotIx,
+           gSlotLen, &scrambledI, &scrambledQ);
+
+  // Convert to signalVector with int8_t quantization matching the TX path
+  signalVector *result = new signalVector(gSlotLen);
+  complex *dst = result->begin();
+  for (unsigned i = 0; i < gSlotLen; i++) {
+    *dst++ = complex((float)(int8_t) scrambledI[i],
+                     (float)(int8_t) scrambledQ[i]);
+  }
+
+  delete[] scrambledI;
+  delete[] scrambledQ;
+
+  return result;
 }
 
 void RadioModem::receiveSlot(signalVector *wwBurst, UMTS::Time wTime) 
@@ -1741,17 +1783,20 @@ void RadioModem::transmitSlot(UMTS::Time nowTime, bool &underrun)
     }
   }
 
-  // copy data
-  signed char *wpp = (signed char *) wp;
-  for (unsigned i=0; i<gSlotLen; i++) {
-     *wpp++ = (signed char) finalWaveformI[i];
-     *wpp++ = (signed char) finalWaveformQ[i];
+  // In-process TX delivery to Transceiver (replaces UDP socket write).
+  // Build a complex<float> burst from the int8-quantized waveforms and
+  // hand it to the Transceiver's TX queue.  Same int8 quantization as the
+  // old UDP serialization to keep on-air output identical.
+  if (mTransceiver) {
+    signalVector txBurst(gSlotLen);
+    complex *txPtr = txBurst.begin();
+    for (unsigned i = 0; i < gSlotLen; i++) {
+      *txPtr++ = complex((float)(int8_t) finalWaveformI[i],
+                         (float)(int8_t) finalWaveformQ[i]);
+    }
+    mTransceiver->addRadioVector(txBurst, nowTime);
   }
-
-  buffer[bufferSize-1] = '\0';
-
-  // write to the socket
-  mDataSocket.write(buffer,bufferSize);
+  (void) buffer; (void) bufferSize; (void) wp; // unused without UDP path
 
   mLastTransmitTime = nowTime;
   //LOG(INFO) << LOGVAR(mLastTransmitTime) <<LOGVAR2("clock.FN",gNodeB.clock().FN());
@@ -1762,8 +1807,15 @@ void RadioModem::addBurst (TxBitsBurst *wBurst, bool &underrun, Time& updateTime
 {
   underrun = false;
   if (wBurst->time() > mLastTransmitTime) {
+    // Drop instead of asserting if the queue blows up — happens during
+    // Transceiver stop/start when producers may briefly outrun the consumer.
+    if (mTxQueue->size() >= 10000) {
+      LOG(WARNING) << "Tx queue full (" << mTxQueue->size() << "), dropping burst at " << wBurst->time();
+      underrun = true;
+      updateTime = mLastTransmitTime;
+      return;
+    }
     mTxQueue->write(wBurst);
-    assert(mTxQueue->size() < 10000);       // (pat) FIXME: Make sure someone is on the other end.
   } else {
     underrun = true;
     updateTime = mLastTransmitTime;
