@@ -877,6 +877,7 @@ static void configureSIB5Parameters(SIB_TYPE *sib)
     }
 
     int cpichTxPower = gConfig.getNum("UMTS.CPICH.TxPower");
+	int prachPowerOffsetPowerRampStep = gConfig.getNum("UMTS.PRACH.PowerOffset.PowerRampStep");
 
     prach_SI->modeSpecificInfo.present = PRACH_SystemInformation__modeSpecificInfo_PR_fdd;
     prach_SI->modeSpecificInfo.choice.fdd.primaryCPICH_TX_Power = RN_CALLOC(ASN::PrimaryCPICH_TX_Power_t);
@@ -884,7 +885,7 @@ static void configureSIB5Parameters(SIB_TYPE *sib)
     prach_SI->modeSpecificInfo.choice.fdd.constantValue = RN_CALLOC(ASN::ConstantValue_t);
     *prach_SI->modeSpecificInfo.choice.fdd.constantValue = -10;
     prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset = RN_CALLOC(ASN::PRACH_PowerOffset);
-    prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->powerRampStep = 3;
+    prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->powerRampStep = prachPowerOffsetPowerRampStep;
     prach_SI->modeSpecificInfo.choice.fdd.prach_PowerOffset->preambleRetransMax = 64;
     prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters = RN_CALLOC(ASN::RACH_TransmissionParameters);
     prach_SI->modeSpecificInfo.choice.fdd.rach_TransmissionParameters->mmax = 32;

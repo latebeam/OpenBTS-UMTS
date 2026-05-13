@@ -23,6 +23,9 @@
 #include "asn_system.h"
 #include "URRCMessages.h"
 #include "IntegrityProtect.h"
+
+#define AUTO_START_RTT_MEASUREMENT 1
+
 namespace ASN {
 //#include "InitialUE-Identity.h"
 #include "UE-RadioAccessCapability.h"

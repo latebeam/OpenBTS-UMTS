@@ -855,7 +855,7 @@ class DCHFEC : public PhCh , public L1CCTrCh	// multiple TFC, multiple TB
 		, L1CCTrCh(this)
 		, mLastUlSNR(0.0f)
 		, mLastActivityFN(-1)
-		, mTpcTargetSnr(8.0f)
+		, mTpcTargetSnr(25.0f)
 		{}
 	void open();
 	void close();

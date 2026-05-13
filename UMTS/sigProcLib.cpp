@@ -19,8 +19,148 @@
 #include "UMTSCommon.h"
 
 #include <Logger.h>
+#include <vector>
+
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
+#define UMTS_HAS_X86_INTRINSICS 1
+#endif
 
 #define TABLESIZE 1024
+
+namespace {
+#if (defined(__GNUC__) || defined(__clang__)) && defined(UMTS_HAS_X86_INTRINSICS)
+static const bool gHasAvx  = __builtin_cpu_supports("avx");
+static const bool gHasSse3 = __builtin_cpu_supports("sse3");
+#else
+static const bool gHasAvx  = false;
+static const bool gHasSse3 = false;
+#endif
+
+// c[t] = sum_{k=0..Lb-1} aData[t-Lb+1+k] * bFwd[k] for t in [startT, stopT).
+
+static void cxcx_loop_scalar(const complex *aData, const complex *bFwd,
+                             int Lb, int startT, int stopT, complex *outPtr) {
+    for (int t = startT; t < stopT; t++) {
+        const complex *aP = aData + (t - Lb + 1);
+        float sumR = 0.0f, sumI = 0.0f;
+        for (int k = 0; k < Lb; k++) {
+            float ar = aP[k].r, ai = aP[k].i;
+            float br = bFwd[k].r, bi = bFwd[k].i;
+            sumR += ar*br - ai*bi;
+            sumI += ar*bi + ai*br;
+        }
+        *outPtr++ = complex(sumR, sumI);
+    }
+}
+
+#if defined(UMTS_HAS_X86_INTRINSICS)
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((target("sse3")))
+#endif
+static void cxcx_loop_sse3(const complex *aData, const complex *bFwd,
+                           int Lb, int startT, int stopT, complex *outPtr) {
+    for (int t = startT; t < stopT; t++) {
+        const complex *aP = aData + (t - Lb + 1);
+        __m128 acc0 = _mm_setzero_ps();
+        __m128 acc1 = _mm_setzero_ps();
+        int k = 0;
+        for (; k + 4 <= Lb; k += 4) {
+            __m128 a0 = _mm_loadu_ps((const float*)(aP + k));
+            __m128 b0 = _mm_loadu_ps((const float*)(bFwd + k));
+            __m128 a1 = _mm_loadu_ps((const float*)(aP + k + 2));
+            __m128 b1 = _mm_loadu_ps((const float*)(bFwd + k + 2));
+            __m128 ar0 = _mm_moveldup_ps(a0);
+            __m128 ai0 = _mm_movehdup_ps(a0);
+            __m128 bs0 = _mm_shuffle_ps(b0, b0, 0xB1);
+            __m128 ar1 = _mm_moveldup_ps(a1);
+            __m128 ai1 = _mm_movehdup_ps(a1);
+            __m128 bs1 = _mm_shuffle_ps(b1, b1, 0xB1);
+            __m128 p0 = _mm_addsub_ps(_mm_mul_ps(ar0, b0), _mm_mul_ps(ai0, bs0));
+            __m128 p1 = _mm_addsub_ps(_mm_mul_ps(ar1, b1), _mm_mul_ps(ai1, bs1));
+            acc0 = _mm_add_ps(acc0, p0);
+            acc1 = _mm_add_ps(acc1, p1);
+        }
+        for (; k + 2 <= Lb; k += 2) {
+            __m128 a = _mm_loadu_ps((const float*)(aP + k));
+            __m128 b = _mm_loadu_ps((const float*)(bFwd + k));
+            __m128 ar = _mm_moveldup_ps(a);
+            __m128 ai = _mm_movehdup_ps(a);
+            __m128 bs = _mm_shuffle_ps(b, b, 0xB1);
+            __m128 p = _mm_addsub_ps(_mm_mul_ps(ar, b), _mm_mul_ps(ai, bs));
+            acc0 = _mm_add_ps(acc0, p);
+        }
+        // acc = [r0, i0, r1, i1] → sumR = r0+r1, sumI = i0+i1
+        __m128 acc = _mm_add_ps(acc0, acc1);
+        __m128 sSh = _mm_shuffle_ps(acc, acc, _MM_SHUFFLE(1,0,3,2));
+        __m128 r   = _mm_add_ps(acc, sSh);
+        float sumR = _mm_cvtss_f32(r);
+        float sumI = _mm_cvtss_f32(_mm_shuffle_ps(r, r, _MM_SHUFFLE(1,1,1,1)));
+        if (k < Lb) {
+            sumR += aP[k].r * bFwd[k].r - aP[k].i * bFwd[k].i;
+            sumI += aP[k].r * bFwd[k].i + aP[k].i * bFwd[k].r;
+        }
+        *outPtr++ = complex(sumR, sumI);
+    }
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((target("avx")))
+#endif
+static void cxcx_loop_avx(const complex *aData, const complex *bFwd,
+                          int Lb, int startT, int stopT, complex *outPtr) {
+    for (int t = startT; t < stopT; t++) {
+        const complex *aP = aData + (t - Lb + 1);
+        __m256 acc0 = _mm256_setzero_ps();
+        __m256 acc1 = _mm256_setzero_ps();
+        int k = 0;
+        for (; k + 8 <= Lb; k += 8) {
+            __m256 a0 = _mm256_loadu_ps((const float*)(aP + k));
+            __m256 b0 = _mm256_loadu_ps((const float*)(bFwd + k));
+            __m256 a1 = _mm256_loadu_ps((const float*)(aP + k + 4));
+            __m256 b1 = _mm256_loadu_ps((const float*)(bFwd + k + 4));
+            __m256 ar0 = _mm256_moveldup_ps(a0);
+            __m256 ai0 = _mm256_movehdup_ps(a0);
+            __m256 bs0 = _mm256_shuffle_ps(b0, b0, 0xB1);
+            __m256 ar1 = _mm256_moveldup_ps(a1);
+            __m256 ai1 = _mm256_movehdup_ps(a1);
+            __m256 bs1 = _mm256_shuffle_ps(b1, b1, 0xB1);
+            __m256 p0 = _mm256_addsub_ps(_mm256_mul_ps(ar0, b0),
+                                         _mm256_mul_ps(ai0, bs0));
+            __m256 p1 = _mm256_addsub_ps(_mm256_mul_ps(ar1, b1),
+                                         _mm256_mul_ps(ai1, bs1));
+            acc0 = _mm256_add_ps(acc0, p0);
+            acc1 = _mm256_add_ps(acc1, p1);
+        }
+        for (; k + 4 <= Lb; k += 4) {
+            __m256 a = _mm256_loadu_ps((const float*)(aP + k));
+            __m256 b = _mm256_loadu_ps((const float*)(bFwd + k));
+            __m256 ar = _mm256_moveldup_ps(a);
+            __m256 ai = _mm256_movehdup_ps(a);
+            __m256 bs = _mm256_shuffle_ps(b, b, 0xB1);
+            __m256 p = _mm256_addsub_ps(_mm256_mul_ps(ar, b),
+                                        _mm256_mul_ps(ai, bs));
+            acc0 = _mm256_add_ps(acc0, p);
+        }
+        __m256 acc = _mm256_add_ps(acc0, acc1);
+        __m128 lo = _mm256_castps256_ps128(acc);
+        __m128 hi = _mm256_extractf128_ps(acc, 1);
+        __m128 s  = _mm_add_ps(lo, hi);
+        __m128 sSh= _mm_shuffle_ps(s, s, _MM_SHUFFLE(1,0,3,2));
+        __m128 r  = _mm_add_ps(s, sSh);
+        float sumR = _mm_cvtss_f32(r);
+        float sumI = _mm_cvtss_f32(_mm_shuffle_ps(r, r, _MM_SHUFFLE(1,1,1,1)));
+        for (; k < Lb; k++) {
+            sumR += aP[k].r * bFwd[k].r - aP[k].i * bFwd[k].i;
+            sumI += aP[k].r * bFwd[k].i + aP[k].i * bFwd[k].r;
+        }
+        *outPtr++ = complex(sumR, sumI);
+    }
+}
+#endif // UMTS_HAS_X86_INTRINSICS
+
+} // namespace
+// ---------------------------------------------------------------------------
 
 using namespace GSM;
 
@@ -358,20 +498,32 @@ signalVector* convolve(const signalVector *a,
       bool fastPath = (t >= Lb - 1) && (stopIndex - 1 < La);
 
       if (fastPath && !aRealOnly && !bRealOnly) {
-        // Complex × complex — hot path for correlate() / estimateChannel
-        while (t < stopIndex) {
-          const complex *aP = aData + t;
-          const complex *bP = bData;
-          float sumR = 0.0f, sumI = 0.0f;
-          for (int k = 0; k < Lb; k++) {
-            float ar = aP[-k].real(), ai = aP[-k].imag();
-            float br = bP[k].real(), bi = bP[k].imag();
-            sumR += ar*br - ai*bi;
-            sumI += ar*bi + ai*br;
-          }
-          *cPtr++ = complex(sumR, sumI);
-          t++;
-        }
+        [[maybe_unused]] static const bool _pathLogged = [](){
+            const char *path =
+#if defined(UMTS_HAS_X86_INTRINSICS)
+                gHasAvx  ? "AVX"  :
+                gHasSse3 ? "SSE3" :
+#endif
+                           "scalar";
+            LOG(NOTICE) << "convolve: cxcx SIMD path = " << path;
+            return true;
+        }();
+
+        static thread_local std::vector<complex> bRevBuf;
+        if ((int)bRevBuf.size() != Lb) bRevBuf.resize(Lb);
+        for (int j = 0; j < Lb; j++) bRevBuf[j] = bData[Lb-1-j];
+        const complex *bFwd = bRevBuf.data();
+
+        complex *outPtr = &*cPtr;
+        int outCount = stopIndex - t;
+#if defined(UMTS_HAS_X86_INTRINSICS)
+        if (gHasAvx)       cxcx_loop_avx   (aData, bFwd, Lb, t, stopIndex, outPtr);
+        else if (gHasSse3) cxcx_loop_sse3  (aData, bFwd, Lb, t, stopIndex, outPtr);
+        else
+#endif
+                           cxcx_loop_scalar(aData, bFwd, Lb, t, stopIndex, outPtr);
+        cPtr += outCount;
+        t = stopIndex;
       }
       else if (fastPath && bRealOnly) {
         // Complex × real — hot path for delayVector (sinc filter)

@@ -710,7 +710,7 @@ bool RadioModem::detectRACHPreamble(signalVector &wBurst, UMTS::Time wTime, floa
   UMTS::Time cpTime = wTime;
   wTime = wTime + mAICHRACHOffset;
 
-  const unsigned MAX_PENDING_RACH = 20;
+  const unsigned MAX_PENDING_RACH = 60;
 
   // Check that this is a valid access slot
   bool accessSlotSet1 = (wTime.FN() % 2 == 0) && (wTime.TN() % 2 == 0);
@@ -727,6 +727,14 @@ bool RadioModem::detectRACHPreamble(signalVector &wBurst, UMTS::Time wTime, floa
     if (validSlot) { validSubchannel = i; break; }
   }
   if (validSubchannel < 0) return false;
+
+  // Skip preamble correlation on idle slots.
+  {
+    float avgPwr;
+    if (!energyDetect(wBurst, gSlotLen/4, 10.0, &avgPwr)) {
+      return false;
+    }
+  }
 
   // Correlate ALL enabled signatures and collect hits
   struct RACHHit { int sig; float SNR; float TOA; };
@@ -769,35 +777,40 @@ bool RadioModem::detectRACHPreamble(signalVector &wBurst, UMTS::Time wTime, floa
     }
   }
 
-  // False positive filter: when multiple signatures fire with similar SNR,
-  // it's interference (DCH UL, clock leak), not a real preamble.
-  // A real preamble adds 5+ SNR to ONE signature above the others.
+  // Walsh codes aren't orthogonal at non-zero shifts, so one preamble can
+  // cross-correlate into several signatures at the same TOA with similar SNR.
+  // Keep all hits in the strongest hit's TOA cluster (within 2 chips, 3 dB)
+  // and dispatch AICH for each — only the UE's actual signature will pass CRC
+  // during msg decode, the rest expire harmlessly.  Hits at different TOAs
+  // are independent (e.g. a second UE) and stay.
   if (hits.size() > 1) {
-    float minSNR = hits[0].SNR, maxSNR = hits[0].SNR;
-    for (size_t h = 1; h < hits.size(); h++) {
-      if (hits[h].SNR < minSNR) minSNR = hits[h].SNR;
-      if (hits[h].SNR > maxSNR) maxSNR = hits[h].SNR;
-    }
-    float diff = maxSNR - minSNR;
-    if (diff < 5.0f) {
-      ScopedLock lock(mRACHStateLock);
-      for (size_t h = 0; h < hits.size(); h++) {
-        mRACHSignatureStates[hits[h].sig].consecutiveCount = 0;
-        mRACHSignatureStates[hits[h].sig].consecutiveTOA = 0.0;
-      }
-      return false;
-    }
-    // Real preamble: keep only the strongest signature
     int bestIdx = 0;
     for (size_t h = 1; h < hits.size(); h++) {
       if (hits[h].SNR > hits[bestIdx].SNR) bestIdx = h;
     }
-    RACHHit best = hits[bestIdx];
-    hits.clear();
-    hits.push_back(best);
+    float bestSNR = hits[bestIdx].SNR;
+    float bestTOA = hits[bestIdx].TOA;
+
+    std::vector<RACHHit> kept;
+    kept.reserve(hits.size());
+    for (size_t h = 0; h < hits.size(); h++) {
+      if (fabs(hits[h].TOA - bestTOA) > 2.0f) {
+        kept.push_back(hits[h]);
+        continue;
+      }
+      if (hits[h].SNR >= bestSNR - 3.0f) {
+        kept.push_back(hits[h]);
+      } else {
+        ScopedLock lock(mRACHStateLock);
+        mRACHSignatureStates[hits[h].sig].consecutiveCount = 0;
+        mRACHSignatureStates[hits[h].sig].consecutiveTOA = 0.0;
+      }
+    }
+    hits.swap(kept);
   }
 
   // Process surviving hits
+  bool processedAny = false;
   for (size_t h = 0; h < hits.size(); h++) {
     int j = hits[h].sig;
     float TOA = hits[h].TOA;
@@ -883,10 +896,10 @@ bool RadioModem::detectRACHPreamble(signalVector &wBurst, UMTS::Time wTime, floa
       mRACHSignatureStates[j].consecutiveTOA = 0.0;
     }
 
-    return true;
+    processedAny = true;
   }
 
-  return false;
+  return processedAny;
 }
 
 
@@ -975,32 +988,44 @@ bool RadioModem::decodeRACHMessage(signalVector &wBurst, UMTS::Time wTime, float
 
       if (channel == complex(0,0)) channel = complex(1e6,1e6);
 
-      signalVector RACHBurst(wBurst);
-      delayVector(RACHBurst, round(-TOA));
-
-      signalVector truncBurst(RACHBurst.begin(), 0, gSlotLen);
-      scaleVector(truncBurst, complex(1.0,0.0)/channel);
-
       // Use per-message descrambling buffer
       signalVector descrambledRACH = currentRACH.descrambledFrame.segment(gSlotLen*slotIx, gSlotLen);
 
-      descramble(truncBurst,
-                 mRACHMessageAlignedScramblingCodeI + gSlotLen*slotIx,
-                 mRACHMessageAlignedScramblingCodeQ + gSlotLen*slotIx,
-                 &descrambledRACH);
+      // Fused delay + scale + descramble: read src with integer offset,
+      // multiply by (invChannel × scrambleCode) LUT, write to dst.
+      {
+        const int delay = (int)round(-TOA);
+        complex invCh = complex(1.0, 0.0) / channel;
+        complex lut[4];
+        lut[0] = invCh * complex( 1.0, -1.0);
+        lut[1] = invCh * complex( 1.0,  1.0);
+        lut[2] = invCh * complex(-1.0, -1.0);
+        lut[3] = invCh * complex(-1.0,  1.0);
+        int8_t *codeI = mRACHMessageAlignedScramblingCodeI + gSlotLen*slotIx;
+        int8_t *codeQ = mRACHMessageAlignedScramblingCodeQ + gSlotLen*slotIx;
+        complex *src = wBurst.begin();
+        const int srcSize = (int)wBurst.size();
+        complex *dst = descrambledRACH.begin();
+        for (unsigned int i = 0; i < gSlotLen; i++) {
+          int srcIdx = (int)i - delay;
+          complex chip = (srcIdx >= 0 && srcIdx < srcSize) ? src[srcIdx] : complex(0, 0);
+          int idx = ((codeI[i] > 0) ? 0 : 2) | ((codeQ[i] > 0) ? 0 : 1);
+          dst[i] = chip * lut[idx];
+        }
+      }
 
-      // Despread control channel
+      // thread_local to avoid per-slot heap alloc; size = gSlotLen / SF.
+      static thread_local signalVector sDespreadRACHCtrl(10);
       signalVector *despreadRACHControl = despread(descrambledRACH,
                                                     gOVSFTree.code(mRACHMessageControlSpreadingFactorLog2,
                                                                    currentRACH.controlSpreadingCodeIndex),
                                                     (1 << mRACHMessageControlSpreadingFactorLog2),
-                                                    true);
+                                                    true,
+                                                    &sDespreadRACHCtrl);
 
       // Store TFCI bits in per-message storage
       currentRACH.tfciBits[0+2*slotIx] = -0.5*((*despreadRACHControl)[8].real()/(float)(1 << mRACHMessageControlSpreadingFactorLog2))+0.5;
       currentRACH.tfciBits[1+2*slotIx] = -0.5*((*despreadRACHControl)[9].real()/(float)(1 << mRACHMessageControlSpreadingFactorLog2))+0.5;
-
-      delete despreadRACHControl;
 
       processedAny = true;
 

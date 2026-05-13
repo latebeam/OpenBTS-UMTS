@@ -485,8 +485,8 @@ void RANControl::handleReceiveMessages(const sRanControlMsgHeaderType &header, c
             //
             // Range:  msPower=0   → SIR_MIN_DB  → UE pushed low
             //         msPower=255 → SIR_MAX_DB  → UE pushed high
-            static const float SIR_MIN_DB =  5.0f;
-            static const float SIR_MAX_DB = 17.3f;
+            static const float SIR_MIN_DB =  10.0f;
+            static const float SIR_MAX_DB = 22.0f;
             float targetDb     = SIR_MIN_DB + (msPower * (SIR_MAX_DB - SIR_MIN_DB)) / 255.0f;
             float targetLinear = powf(10.0f, targetDb / 10.0f);
 

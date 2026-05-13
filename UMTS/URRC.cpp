@@ -19,6 +19,9 @@
 #include "../SGSNGGSN/SgsnExport.h"
 #include "../SGSNGGSN/GPRSL3Messages.h"
 #include "../SGSNGGSN/SgsnBase.h"	// For SmCause values.
+#include "../Control/RANControl.h"
+
+extern Control::RANControl gRANControl;
 #define CASENAME(x) case x: return #x;
 
 // Here we have documentation on the flows through RRC, excluding the internals of RLC,
@@ -870,6 +873,12 @@ void UEInfo::ueSetState(UEState newState)
 	default: break;
 	}
 	mUeState = newState;
+
+#if AUTO_START_RTT_MEASUREMENT
+	if (newState == stCELL_DCH) {
+		startRttMeasurement(&gRANControl);
+	}
+#endif
 }
 
 
